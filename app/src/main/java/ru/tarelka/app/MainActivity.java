@@ -1,14 +1,26 @@
 package ru.tarelka.app;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.provider.Settings;
 import android.view.View;
+import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -17,11 +29,23 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import androidx.webkit.WebViewAssetLoader;
+import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.PeriodicWorkRequest;
+import androidx.work.WorkManager;
 
-public class MainActivity extends Activity {
+import org.json.JSONObject;
+
+import java.util.concurrent.TimeUnit;
+
+public class MainActivity extends Activity implements SensorEventListener {
     private static final String HOST = "appassets.androidplatform.net";
     private static final String START_URL = "https://" + HOST + "/assets/index.html";
+    private static final int REQ_STEPS = 42;
+
     private WebView web;
+    private SensorManager sensors;
+    private Sensor stepSensor;
+    private long lastPush = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -30,6 +54,9 @@ public class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Color.parseColor("#FFFFFF"));
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+
+        sensors = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        stepSensor = sensors == null ? null : sensors.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
 
         web = new WebView(this);
         setContentView(web);
@@ -65,6 +92,61 @@ public class MainActivity extends Activity {
             }
         });
         web.loadUrl(START_URL);
+
+        if (stepSensor != null && StepWorker.hasPermission(this)) scheduleStepWork();
+    }
+
+    private void scheduleStepWork() {
+        PeriodicWorkRequest req = new PeriodicWorkRequest.Builder(StepWorker.class, 15, TimeUnit.MINUTES).build();
+        WorkManager.getInstance(getApplicationContext())
+                .enqueueUniquePeriodicWork("steps", ExistingPeriodicWorkPolicy.KEEP, req);
+    }
+
+    private String stepsStatus() {
+        if (stepSensor == null) return "none";
+        if (StepWorker.hasPermission(this)) return "ok";
+        SharedPreferences sp = getSharedPreferences("app", MODE_PRIVATE);
+        boolean asked = sp.getBoolean("askedSteps", false);
+        if (asked && Build.VERSION.SDK_INT >= 29
+                && !shouldShowRequestPermissionRationale(Manifest.permission.ACTIVITY_RECOGNITION)) return "denied";
+        return "need";
+    }
+
+    private void js(String code) {
+        if (web != null) web.evaluateJavascript(code, null);
+    }
+
+    private void listenSteps(boolean on) {
+        if (sensors == null || stepSensor == null) return;
+        if (on && StepWorker.hasPermission(this)) {
+            sensors.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_NORMAL);
+        } else {
+            sensors.unregisterListener(this);
+        }
+    }
+
+    @Override
+    public void onSensorChanged(SensorEvent e) {
+        StepTracker.record(this, e.values[0], System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        if (now - lastPush > 3000) {
+            lastPush = now;
+            js("window.onSteps && window.onSteps(" + JSONObject.quote(StepTracker.json(this)) + ")");
+        }
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy) { }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_STEPS) return;
+        if (StepWorker.hasPermission(this)) {
+            scheduleStepWork();
+            listenSteps(true);
+        }
+        js("window.onStepsStatus && window.onStepsStatus(" + JSONObject.quote(stepsStatus()) + ")");
     }
 
     @Override
@@ -79,6 +161,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        listenSteps(false);
         if (web != null) web.onPause();
     }
 
@@ -86,9 +169,11 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (web != null) web.onResume();
+        listenSteps(true);
+        js("window.onAppResume && window.onAppResume()");
     }
 
-    /** Мост для страницы: копирование и отправка текста через меню Android. */
+    /** Мост для страницы. Методы вызываются из JavaScript. */
     class Bridge {
         @JavascriptInterface
         public void copy(final String text) {
@@ -105,6 +190,57 @@ public class MainActivity extends Activity {
                 send.setType("text/plain");
                 send.putExtra(Intent.EXTRA_TEXT, text);
                 startActivity(Intent.createChooser(send, "Отправить отчёт"));
+            });
+        }
+
+        @JavascriptInterface
+        public String stepsStatus() {
+            return MainActivity.this.stepsStatus();
+        }
+
+        @JavascriptInterface
+        public String stepsJson() {
+            return StepTracker.json(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void requestSteps() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT < 29 || StepWorker.hasPermission(MainActivity.this)) {
+                    scheduleStepWork();
+                    listenSteps(true);
+                    js("window.onStepsStatus && window.onStepsStatus(" + JSONObject.quote(MainActivity.this.stepsStatus()) + ")");
+                    return;
+                }
+                getSharedPreferences("app", MODE_PRIVATE).edit().putBoolean("askedSteps", true).apply();
+                requestPermissions(new String[]{Manifest.permission.ACTIVITY_RECOGNITION}, REQ_STEPS);
+            });
+        }
+
+        @JavascriptInterface
+        public void openAppSettings() {
+            runOnUiThread(() -> {
+                try {
+                    startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", getPackageName(), null)));
+                } catch (Exception ignored) {
+                }
+            });
+        }
+
+        @JavascriptInterface
+        @SuppressWarnings("deprecation")
+        public void vibrate(final int ms) {
+            Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            if (v == null || !v.hasVibrator()) return;
+            v.vibrate(VibrationEffect.createOneShot(Math.max(50, Math.min(ms, 2000)), VibrationEffect.DEFAULT_AMPLITUDE));
+        }
+
+        @JavascriptInterface
+        public void keepScreenOn(final boolean on) {
+            runOnUiThread(() -> {
+                if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             });
         }
     }
