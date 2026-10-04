@@ -1,0 +1,44 @@
+rules_version = '2';
+// Правила доступа для приложения «Тарелка и штанга».
+// Вставить в Firebase: Firestore Database → Rules → заменить всё → Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function authed() { return request.auth != null; }
+    function client(cid) { return get(/databases/$(database)/documents/clients/$(cid)).data; }
+
+    // Настройки тренера (ключ ИИ) — только сам тренер
+    match /coaches/{uid} {
+      allow read, write: if authed() && request.auth.uid == uid;
+    }
+
+    // Коды приглашения: прочитать по коду может любой вошедший, создать и удалить — только тренер
+    match /invites/{code} {
+      allow get: if authed();
+      allow create: if authed() && request.resource.data.coachUid == request.auth.uid;
+      allow update, delete: if authed() && resource.data.coachUid == request.auth.uid;
+    }
+
+    // Карточка подопечной: видят тренер и сама подопечная
+    match /clients/{cid} {
+      allow read: if authed() && (resource.data.coachUid == request.auth.uid || resource.data.ownerUid == request.auth.uid);
+      allow create: if authed() && request.resource.data.coachUid == request.auth.uid && request.resource.data.ownerUid == null;
+      allow update: if authed() && (
+        // тренер
+        (resource.data.coachUid == request.auth.uid && request.resource.data.coachUid == request.auth.uid)
+        // подопечная не может сменить тренера и владельца
+        || (resource.data.ownerUid == request.auth.uid
+            && request.resource.data.coachUid == resource.data.coachUid
+            && request.resource.data.ownerUid == request.auth.uid)
+        // подключение по коду: свободную карточку можно занять, меняя только владельца и время
+        || (resource.data.ownerUid == null
+            && request.resource.data.ownerUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerUid', 'linkedAt'])));
+      allow delete: if authed() && resource.data.coachUid == request.auth.uid;
+
+      // Дни и тренировки
+      match /{sub=**} {
+        allow read, write: if authed() && (client(cid).coachUid == request.auth.uid || client(cid).ownerUid == request.auth.uid);
+      }
+    }
+  }
+}

@@ -43,4 +43,5 @@ dependencies {
     implementation("androidx.webkit:webkit:1.11.0")
     implementation("androidx.work:work-runtime:2.9.1")
     implementation("androidx.annotation:annotation:1.8.0")
+    implementation("androidx.core:core:1.13.1")
 }

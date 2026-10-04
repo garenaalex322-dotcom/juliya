@@ -40,7 +40,9 @@ const IC = {
   left: sv('<path d="M14.5 6l-6 6 6 6"/>', 20), right: sv('<path d="M9.5 6l6 6-6 6"/>', 20),
   x: sv('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>', 18), plus: sv('<path d="M12 5.5v13M5.5 12h13"/>', 18),
   up: sv('<path d="M6.5 14.5L12 9l5.5 5.5"/>', 18), down: sv('<path d="M6.5 9.5L12 15l5.5-5.5"/>', 18),
-  check: sv('<path d="M5.5 12.5l4.2 4.2 8.8-9.4"/>', 20), chev: sv('<path d="M9.5 6l6 6-6 6"/>', 18),
+  check: sv('<path d="M5.5 12.5l4.2 4.2 8.8-9.4"/>', 20),
+  camera: sv('<path d="M4 8.5h3l1.6-2.5h6.8L17 8.5h3v10.5H4z"/><circle cx="12" cy="13.5" r="3.4"/>', 18),
+  spark: sv('<path d="M12 3.5l1.9 5.6 5.6 1.9-5.6 1.9L12 18.5l-1.9-5.6L4.5 11l5.6-1.9z"/>', 18), chev: sv('<path d="M9.5 6l6 6-6 6"/>', 18),
   play: sv('<path d="M10 4.5h5.5M12.75 4.5v2.2"/><circle cx="12.75" cy="13.5" r="6.8"/><path d="M12.75 10v3.5l2.3 1.6"/>', 18)
 };
 const glassSvg = on => `<svg viewBox="0 0 30 38" width="26" height="34" aria-hidden="true"><path d="M4 3h22l-2.6 30.2a2.5 2.5 0 0 1-2.5 2.3H9.1a2.5 2.5 0 0 1-2.5-2.3z" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
@@ -53,8 +55,14 @@ const nb = (m, ...a) => { try { return NB && typeof NB[m] === 'function' ? NB[m]
 const KEY = 'tarelka-shtanga-v1';
 let storageOk = true;
 try { localStorage.setItem('__t', '1'); localStorage.removeItem('__t'); } catch (e) { storageOk = false; }
-function loadState() { try { const r = localStorage.getItem(KEY); return r ? JSON.parse(r) : null; } catch (e) { storageOk = false; return null; } }
-function save() { if (S.demo) return; try { localStorage.setItem(KEY, JSON.stringify(S)); storageOk = true; } catch (e) { storageOk = false; } }
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); return true; } catch (e) { return false; } };
+const lsJson = k => { try { return JSON.parse(lsGet(k) || 'null'); } catch (e) { return null; } };
+let MODE = lsGet('tarelka-mode') === 'coach' ? 'coach' : 'client';
+const CO = { user: null, authChecked: false, ready: false, clients: [], cur: null, ai: { key: '', model: '' }, unsub: null, err: '', busy: false, confirm: null, autoOpened: false };
+function storeKey() { return MODE === 'coach' && CO.cur ? KEY + '-c-' + CO.cur : KEY; }
+function loadState() { if (MODE === 'coach' && !CO.cur) return null; return lsJson(storeKey()); }
+function save(full) { if (S.demo) return; if (Sync.cid) Sync.touch(full); storageOk = lsSet(storeKey(), JSON.stringify(S)); }
 
 /* ================= Справочники ================= */
 const MEALS = ['Завтрак', 'Обед', 'Ужин', 'Перекус'];
@@ -213,8 +221,20 @@ function refreshSteps() {
 function stepsFor(k) {
   const d = S.days[k];
   if (d && d.steps != null && d.steps !== '') return { n: +d.steps || 0, src: 'manual' };
-  if (nativeSteps[k] != null) return { n: +nativeSteps[k] || 0, src: 'phone' };
+  if (MODE !== 'coach' && nativeSteps[k] != null) return { n: +nativeSteps[k] || 0, src: 'phone' };
+  if (d && d.ps != null) return { n: +d.ps || 0, src: 'phone' };
   return { n: 0, src: null };
+}
+function syncPhoneSteps() {
+  if (MODE === 'coach' || S.demo || !NB) return;
+  const from = addDays(todayKey(), -7); let ch = false;
+  for (const k in nativeSteps) {
+    const n = +nativeSteps[k] || 0; if (k < from || !n) continue;
+    const d = S.days[k];
+    if (!d) { S.days[k] = { items: [], water: 0, ps: n }; Sync.touchDays.push(k); ch = true; }
+    else if (d.ps == null || Math.abs(d.ps - n) >= 50) { d.ps = n; Sync.touchDays.push(k); ch = true; }
+  }
+  if (ch) save();
 }
 const woKcal = (wo, w) => NET_MET * w * (wo.minutes || 60) / 60;
 function burnFor(k) {
@@ -239,7 +259,10 @@ async function copyText(text, ta) {
 
 /* ================= Общие элементы ================= */
 function demoBanner() {
-  if (S.demo) return `<div class="banner"><p>Это пример заполненного дневника, чтобы было видно, как всё работает. Ваши записи начнутся с чистого листа.</p><button class="btn btn-primary btn-sm" data-a="startFresh">Начать свой дневник</button></div>`;
+  if (MODE === 'coach') return coachBar();
+  if (S.demo) return `<div class="banner"><p>Это пример заполненного дневника, чтобы было видно, как всё работает. Ваши записи начнутся с чистого листа.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="startFresh">Начать свой дневник</button><button class="btn btn-ghost btn-sm" data-a="tab" data-tab="profile">У меня есть код тренера</button></div></div>`;
+  if (!S.link && window.firebase && ui.tab === 'today' && !lsGet('tarelka-hide-link')) return `<div class="banner"><p>Есть код от тренера? Подключитесь, и тренер будет видеть ваш дневник.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="tab" data-tab="profile">Ввести код</button><button class="btn-link" data-a="hideLink">Позже</button></div></div>`;
+  if (S.link && Sync.status === 'lost' && ui.tab === 'today') return `<div class="banner plain"><p>${esc(syncText())}</p><button class="btn btn-ghost btn-sm" data-a="tab" data-tab="profile">Открыть «Профиль»</button></div>`;
   if (!storageOk) return `<div class="banner plain"><p>Записи сейчас не сохраняются: память приложения недоступна. Сделайте резервную копию в «Профиле».</p></div>`;
   return '';
 }
@@ -275,11 +298,11 @@ function activityCard() {
   const pct = Math.min(100, st.n / goal * 100);
   const isToday = k === todayKey();
   let ctrl = '';
-  if (!S.demo && isToday && st.src !== 'manual') {
+  if (!S.demo && MODE !== 'coach' && isToday && st.src !== 'manual') {
     if (stepsStatus === 'need') ctrl = `<div class="banner"><p>Разрешите приложению доступ к датчику шагов — тогда шаги будут считаться сами.</p><button class="btn btn-primary btn-sm" data-a="stepsAllow">Разрешить</button></div>`;
     else if (stepsStatus === 'denied') ctrl = `<div class="banner plain"><p>Доступ к шагам запрещён. Включите «Физическая активность» в настройках приложения или вводите шаги вручную.</p><button class="btn btn-ghost btn-sm" data-a="stepsSettings">Открыть настройки</button></div>`;
   }
-  const src = st.src === 'manual' ? 'введено вручную' : st.src === 'phone' ? 'считает телефон' : (stepsStatus === 'ok' && isToday ? 'считает телефон' : '');
+  const src = st.src === 'manual' ? 'введено вручную' : st.src === 'phone' ? 'считает телефон' : (MODE !== 'coach' && stepsStatus === 'ok' && isToday ? 'считает телефон' : '');
   const woToday = S.workouts.filter(x => x.date === k);
   let burnHtml;
   if (b) {
@@ -326,13 +349,14 @@ function updateActivityCard() { const el = $('#actCard'); if (el && ui.tab === '
 
 /* ---------- Добавление еды ---------- */
 function previewData() {
-  const parsed = parseText(ui.text), items = [], cnt = {};
+  const skip = ui.aiText && ui.aiText === ui.text;
+  const parsed = skip ? { items: [], unknown: [] } : parseText(ui.text), items = [], cnt = {};
   parsed.items.forEach(it => {
     const base = 't|' + it.src + '|' + it.food.id; cnt[base] = (cnt[base] || 0) + 1; const key = base + '|' + cnt[base];
     if (ui.hidden.has(key)) return; const g = ui.over[key];
     items.push({ key, food: it.food, grams: g != null ? g : it.grams, def: it.def && g == null });
   });
-  ui.extra.forEach(x => items.push({ key: x.key, food: x.food, grams: ui.over[x.key] != null ? ui.over[x.key] : x.grams }));
+  ui.extra.forEach(x => items.push({ key: x.key, food: x.food, grams: ui.over[x.key] != null ? ui.over[x.key] : x.grams, ai: x.ai }));
   ui.manual.forEach(m => items.push({ key: m.key, manual: m }));
   return { items, unknown: parsed.unknown.filter(u => !ui.hidden.has('u|' + u)) };
 }
@@ -341,10 +365,11 @@ function renderPreview() {
   const box = $('#pv'); if (!box) return;
   const { items, unknown } = previewData(); ui.pv = items; ui.unk = unknown;
   let h = '';
+  if (ui.aiBusy || ui.aiPhoto || ui.aiNote) h += `<div class="ai-box">${ui.aiPhoto ? `<img class="ai-thumb" src="${ui.aiPhoto}" alt="Фото еды">` : ''}<p class="small">${ui.aiBusy ? 'Распознаю… обычно 5–20 секунд.' : esc(ui.aiNote || 'Готово. Проверьте граммы — ИИ оценивает примерно.')}</p></div>`;
   if (items.length) h += '<div class="pv">' + items.map((x, i) => {
     if (x.manual) return `<div class="pv-item"><div class="pv-name">${esc(x.manual.name)}<small>введено вручную</small></div><span></span><span class="pv-kcal">${f0(x.manual.kcal)} ккал</span><button class="x-btn" data-a="pvRemove" data-i="${i}" aria-label="Убрать">${IC.x}</button></div>`;
     const w = x.food.water;
-    return `<div class="pv-item"><div class="pv-name">${esc(x.food.name)}${w ? '<small>пойдёт в счётчик воды</small>' : x.def ? '<small>обычная порция, поправьте при желании</small>' : ''}</div>
+    return `<div class="pv-item"><div class="pv-name">${esc(x.food.name)}${w ? '<small>пойдёт в счётчик воды</small>' : x.ai ? '<small>оценка ИИ, поправьте граммы при необходимости</small>' : x.def ? '<small>обычная порция, поправьте при желании</small>' : ''}</div>
       <label class="pv-g"><input class="input input-sm num" type="text" inputmode="decimal" value="${esc(x.grams)}" data-in="pvGrams" data-i="${i}" aria-label="${w ? 'Миллилитры' : 'Граммы'}: ${esc(x.food.name)}">${w || x.food.liq ? 'мл' : 'г'}</label>
       <span class="pv-kcal" id="pvk${i}">${w ? '' : f0(pvKcal(x)) + ' ккал'}</span>
       <button class="x-btn" data-a="pvRemove" data-i="${i}" aria-label="Убрать">${IC.x}</button></div>`;
@@ -378,11 +403,15 @@ function renderSearch() {
 function sheetHead(title) { return `<div class="grabber"></div><div class="sheet-hd"><h2 id="sheetTitle">${esc(title)}</h2><button class="icon-btn" data-a="closeSheet" aria-label="Закрыть">${IC.x}</button></div>`; }
 function sheetAdd() {
   const rec = S.recent.map((r, i) => foodById(r.id) ? `<button class="chip" data-a="pickRecent" data-i="${i}">${esc(r.name)} · ${f0(r.grams)}</button>` : '').join('');
+  const ai = aiCfg();
+  const aiRow = ai ? `<div class="row"><button class="btn btn-ghost btn-sm grow" data-a="aiPhoto" ${ui.aiBusy ? 'disabled' : ''}>${IC.camera} Фото еды</button><button class="btn btn-ghost btn-sm grow" data-a="aiText" ${ui.aiBusy ? 'disabled' : ''}>${IC.spark} Посчитать с ИИ</button></div><input type="file" id="photoIn" accept="image/*" hidden data-ch="photo">`
+    : `<p class="hint">${MODE === 'coach' ? 'Чтобы распознавать фото, добавьте ключ ИИ на экране «Мои подопечные».' : S.link ? 'Распознавание по фото появится, когда тренер подключит ИИ.' : 'Распознавание по фото работает после подключения к тренеру.'}</p>`;
   return `${sheetHead('Добавить еду')}
   ${segm('pickMeal', ui.meal, MEALS.map(m => [m, m]), 'Приём пищи')}
   <div class="field"><label for="foodText">Что вы съели или выпили?</label>
     <textarea id="foodText" class="input" rows="2" data-in="foodText" placeholder="Например: гречка 150 г, котлета, огурец" autocomplete="off">${esc(ui.text)}</textarea>
-    <p class="hint">Через запятую. Понимаю граммы, штуки, ложки, стаканы и тарелки: «2 яйца», «стакан кефира 1%», «чай с сахаром».</p></div>
+    <p class="hint">Через запятую. Понимаю граммы, штуки, ложки, стаканы и тарелки: «2 яйца», «стакан кефира 1%», «чай с сахаром».${ai ? ' Сложное блюдо — напишите своими словами и нажмите «Посчитать с ИИ».' : ''}</p></div>
+  ${aiRow}
   <div id="pv"></div>
   ${rec ? `<div class="field"><span class="lbl">Недавнее</span><div class="chips">${rec}</div></div>` : ''}
   <div class="field"><label for="foodSearch">Найти в базе</label><input id="foodSearch" class="input" type="search" data-in="foodSearch" placeholder="Название продукта" autocomplete="off" value="${esc(ui.q)}"><div id="sr"></div></div>
@@ -402,11 +431,11 @@ function sheetEdit() {
   <div class="row"><button class="btn btn-primary grow" data-a="saveEdit">Сохранить</button><button class="btn btn-warn" data-a="deleteItem">Удалить</button></div>`;
 }
 function resetAdd(meal) {
-  ui.text = ''; ui.q = ''; ui.over = {}; ui.hidden = new Set(); ui.extra = []; ui.manual = []; ui.manualFor = null; ui.pv = [];
+  ui.text = ''; ui.q = ''; ui.over = {}; ui.hidden = new Set(); ui.extra = []; ui.manual = []; ui.manualFor = null; ui.pv = []; ui.aiText = ''; ui.aiNote = ''; ui.aiPhoto = ''; ui.aiBusy = false;
   if (meal) ui.meal = meal;
   else if (ui.date === todayKey()) { const h = new Date().getHours(); ui.meal = h < 11 ? 'Завтрак' : h < 15 ? 'Обед' : h < 18 ? 'Перекус' : h < 22 ? 'Ужин' : 'Перекус'; }
 }
-function pushRecent(food, grams) { S.recent = [{ id: food.id, name: food.name, grams: Math.round(grams) }].concat(S.recent.filter(r => r.id !== food.id)).slice(0, 10); }
+function pushRecent(food, grams) { if (food.ai) return; S.recent = [{ id: food.id, name: food.name, grams: Math.round(grams) }].concat(S.recent.filter(r => r.id !== food.id)).slice(0, 10); }
 
 function sheetSteps() {
   const st = stepsFor(ui.date);
@@ -513,7 +542,7 @@ function renderTrain() {
   const hist = S.workouts.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 15);
   h += `<section class="card"><div class="sec-head"><h2>История</h2>${S.workouts.length ? `<span class="muted small">всего ${S.workouts.length}</span>` : ''}</div>${hist.length ? `<div>${hist.map(w => {
     const dn = w.ex.reduce((s, e) => s + e.sets.filter(x => x.done).length, 0);
-    return `<button class="hist" data-a="openWorkout" data-id="${w.id}"><span><b>${esc(w.dayName)}</b><span class="small muted" style="display:block">${fmtS(w.date)} · ${f0(w.minutes || 60)} мин${w.note ? ' · ' + esc(w.note) : ''}</span></span><span class="pill">${dn} ${plural(dn, 'подход', 'подхода', 'подходов')}</span></button>`;
+    return `<button class="hist" data-a="openWorkout" data-id="${w.id}"><span><b>${esc(w.dayName)}</b><span class="small muted" style="display:block">${fmtS(w.date)} · ${f0(w.minutes || 60)} мин${w.author === 'coach' ? ' · записал тренер' : ''}${w.note ? ' · ' + esc(w.note) : ''}</span></span><span class="pill">${dn} ${plural(dn, 'подход', 'подхода', 'подходов')}</span></button>`;
   }).join('')}</div>` : `<p class="muted small">Здесь появятся завершённые тренировки.</p>`}</section>`;
   return h;
 }
@@ -827,7 +856,9 @@ function buildReport(n, detail) {
 }
 function renderProfile() {
   const p = S.profile, opt = (arr, v) => arr.map(([k, l]) => `<option value="${k}" ${String(v) === k ? 'selected' : ''}>${l}</option>`).join('');
+  const coachMode = MODE === 'coach';
   return `<header class="hd"><h1>Профиль</h1></header>${demoBanner()}
+  ${linkCard()}
   <section class="card"><h2>Данные и норма</h2>
     <div class="grid2">
       <div class="field span2"><label for="pf_name">Имя</label><input id="pf_name" class="input" data-in="pf" data-f="name" value="${esc(p.name)}"></div>
@@ -851,7 +882,7 @@ function renderProfile() {
       <div class="field"><label for="pf_steps">Шаги в день</label><input id="pf_steps" class="input num" inputmode="numeric" data-in="pf" data-f="stepGoal" value="${esc(p.stepGoal)}"></div>
       <div class="field span2"><label for="pf_rest">Отдых между подходами</label><select id="pf_rest" class="input" data-ch="pf" data-f="rest">${opt([['0', 'Без таймера'], ['60', '1 минута'], ['90', '1,5 минуты'], ['120', '2 минуты'], ['180', '3 минуты']], p.rest)}</select></div>
     </div>
-    ${NB ? `<p class="small muted">Подсчёт шагов: ${stepsStatus === 'ok' ? 'включён, телефон считает шаги сам.' : stepsStatus === 'none' ? 'в телефоне нет датчика шагов — вводите шаги вручную.' : 'нужно разрешение.'}</p>${stepsStatus === 'need' ? `<button class="btn btn-ghost" data-a="stepsAllow">Разрешить подсчёт шагов</button>` : stepsStatus === 'denied' ? `<button class="btn btn-ghost" data-a="stepsSettings">Открыть настройки приложения</button>` : ''}` : ''}
+    ${NB && !coachMode ? `<p class="small muted">Подсчёт шагов: ${stepsStatus === 'ok' ? 'включён, телефон считает шаги сам.' : stepsStatus === 'none' ? 'в телефоне нет датчика шагов — вводите шаги вручную.' : 'нужно разрешение.'}</p>${stepsStatus === 'need' ? `<button class="btn btn-ghost" data-a="stepsAllow">Разрешить подсчёт шагов</button>` : stepsStatus === 'denied' ? `<button class="btn btn-ghost" data-a="stepsSettings">Открыть настройки приложения</button>` : ''}` : ''}
   </section>
   <section class="card"><h2>Отчёт тренеру</h2><p class="small muted">Питание, расход, шаги, вода, тренировки с весами, вес и замеры.</p>
     ${segm('repDays', ui.repDays, [[7, '7 дней'], [14, '14 дней'], [30, '30 дней']], 'Период')}
@@ -869,14 +900,14 @@ function renderProfile() {
       <div class="field"><label for="cC">Углеводы на 100 г</label><input id="cC" class="input num" inputmode="decimal"></div></div>
     <button class="btn btn-ghost" data-a="addCustom">Добавить продукт</button>
   </section>
-  <section class="card"><h2>Резервная копия</h2><p class="small muted">Записи хранятся на этом телефоне. Если удалить приложение или сменить телефон, они пропадут. Раз в неделю копируйте код и сохраняйте его, например, в «Избранном» Telegram — по нему всё восстановится.</p>
+  ${coachMode ? '' : `<section class="card"><h2>Резервная копия</h2><p class="small muted">Записи хранятся на этом телефоне. Если удалить приложение или сменить телефон, они пропадут. Раз в неделю копируйте код и сохраняйте его, например, в «Избранном» Telegram — по нему всё восстановится.</p>
     ${ui.backup ? `<textarea id="backupTa" class="input code" rows="4" readonly>${esc(ui.backup)}</textarea><button class="btn btn-ghost" data-a="copyBackup">Скопировать код</button>` : `<button class="btn btn-ghost" data-a="makeBackup">Получить код копии</button>`}
     <div class="field"><label for="restoreTa">Восстановить из кода</label><textarea id="restoreTa" class="input code" rows="3" placeholder="BAK1:…"></textarea></div>
     ${ui.confirm === 'restore' ? `<div class="confirm"><p>Все текущие записи заменятся записями из копии. Продолжить?</p><div class="row"><button class="btn btn-warn btn-sm" data-a="restoreYes">Да, восстановить</button><button class="btn btn-ghost btn-sm" data-a="confirmNo">Отмена</button></div></div>` : `<button class="btn btn-ghost" data-a="restore">Восстановить</button>`}
-  </section>
+  </section>`}
   <section class="card"><h2>О приложении</h2>
     <p class="small muted">В базе ${FOODS.length} продуктов и блюд и ${EXERCISES.length} упражнений. Для готовых блюд калорийность средняя: домашний борщ или котлета могут отличаться на 10–20%. Продукты, которые едите часто, лучше добавить с упаковки в «Мои продукты».</p>
-    ${ui.confirm === 'wipe' ? `<div class="confirm"><p>Удалить все записи с этого телефона? Это нельзя отменить.</p><div class="row"><button class="btn btn-warn btn-sm" data-a="wipeYes">Удалить всё</button><button class="btn btn-ghost btn-sm" data-a="confirmNo">Отмена</button></div></div>` : `<button class="btn btn-warn" data-a="wipe">Удалить все данные</button>`}
+    ${coachMode ? '' : ui.confirm === 'wipe' ? `<div class="confirm"><p>Удалить все записи с этого телефона? Это нельзя отменить.${S.link ? ' Связь с тренером тоже отключится, у тренера записи останутся.' : ''}</p><div class="row"><button class="btn btn-warn btn-sm" data-a="wipeYes">Удалить всё</button><button class="btn btn-ghost btn-sm" data-a="confirmNo">Отмена</button></div></div>` : `<button class="btn btn-warn" data-a="wipe">Удалить все данные</button>`}
   </section>`;
 }
 
@@ -887,6 +918,439 @@ function decodeCode(text, prefixes) {
   const t = String(text || '').replace(/\s+/g, '');
   for (const pf of prefixes) { const i = t.indexOf(pf); if (i >= 0) { try { return { pf, data: JSON.parse(b64d(t.slice(i + pf.length))) }; } catch (e) { return null; } } }
   return null;
+}
+
+/* ================= Облако: Firebase ================= */
+const FB_CONFIG = {
+  apiKey: 'AIzaSyDWKPIAy0Stj1qGM-0lthgus33mJKTByGs',
+  authDomain: 'trener-bca36.firebaseapp.com',
+  projectId: 'trener-bca36',
+  storageBucket: 'trener-bca36.firebasestorage.app',
+  messagingSenderId: '509917504553',
+  appId: '1:509917504553:web:858b7728f34cc861a86838'
+};
+const FB = {
+  ok: false, auth: null, db: null,
+  init() {
+    if (this.ok) return true;
+    if (!window.firebase || !firebase.initializeApp) return false;
+    try {
+      if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(FB_CONFIG);
+      this.auth = firebase.auth(); this.db = firebase.firestore();
+      try { const p = this.db.enablePersistence({ synchronizeTabs: false }); if (p && p.catch) p.catch(() => { }); } catch (e) { /* без офлайн-кэша */ }
+      this.ok = true;
+    } catch (e) { this.ok = false; }
+    return this.ok;
+  }
+};
+function fbErr(e) {
+  const c = String((e && e.code) || '');
+  if (c.includes('permission-denied')) return 'Нет доступа. Возможно, код уже использован или тренер выдал новый.';
+  if (c.includes('not-found')) return 'Карточка не найдена. Попросите у тренера новый код.';
+  if (c.includes('unavailable') || c.includes('network')) return 'Нет связи с сервером. Проверьте интернет.';
+  if (c.includes('wrong-password') || c.includes('invalid-credential') || c.includes('invalid-login')) return 'Неверная почта или пароль.';
+  if (c.includes('user-not-found')) return 'Такого аккаунта нет. Нажмите «Создать аккаунт».';
+  if (c.includes('email-already-in-use')) return 'Аккаунт с этой почтой уже есть — нажмите «Войти».';
+  if (c.includes('weak-password')) return 'Пароль слишком короткий: нужно минимум 6 символов.';
+  if (c.includes('invalid-email')) return 'Почта указана с ошибкой.';
+  if (c.includes('too-many-requests')) return 'Слишком много попыток. Подождите пару минут.';
+  if (c.includes('operation-not-allowed') || c.includes('admin-restricted')) return 'В Firebase не включён этот способ входа: Authentication → Sign-in method.';
+  return (e && e.message) ? String(e.message) : String(e);
+}
+
+/* ---------- Синхронизация дневника ---------- */
+const ROOT = ['profile', 'program', 'weights', 'measures', 'custom', 'customEx'];
+function cj(v) {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(cj).join(',') + ']';
+  return '{' + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + cj(v[k])).join(',') + '}';
+}
+const strip = (o, keys) => { const r = {}; for (const k in o) if (!keys.includes(k)) r[k] = o[k]; return r; };
+const jroot = f => cj(S[f]);
+const jday = d => cj(strip(d, ['u']));
+const jwo = w => cj(strip(w, ['u']));
+let pendingRender = false;
+const typing = () => { const ae = document.activeElement; return !!(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && $('#view').contains(ae)); };
+function refreshAfterSync() { if (ui.sheet || typing()) { pendingRender = true; refreshSyncLine(); return; } render(); }
+function syncText() {
+  switch (Sync.status) {
+    case 'ok': return 'Синхронизировано';
+    case 'pending': return 'Отправляю изменения… Если нет интернета, отправлю позже.';
+    case 'connecting': return 'Подключаюсь…';
+    case 'lost': return 'Связь с тренером потеряна. ' + (Sync.err || '');
+    case 'error': return 'Нет связи: ' + (Sync.err || 'проверьте интернет') + ' Повторю попытку.';
+    default: return 'Не подключено';
+  }
+}
+function refreshSyncLine() { const el = $('#syncLine'); if (el) el.textContent = syncText(); }
+
+const Sync = {
+  cid: null, role: null, unsubs: [], shadow: {}, last: {}, inflight: {}, got: {}, ready: false, timer: null, retry: null, status: 'off', err: '', touchDays: [],
+  shKey() { return KEY + '-sh-' + this.role + '-' + this.cid; },
+  ref() { return FB.db.collection('clients').doc(this.cid); },
+  start(cid, role) {
+    this.stop();
+    if (!FB.init()) { this.status = 'error'; this.err = 'Нет связи с сервером.'; return; }
+    this.cid = cid; this.role = role; this.shadow = lsJson(this.shKey()) || {}; this.inflight = {}; this.got = {}; this.ready = false;
+    this.status = 'connecting'; this.err = '';
+    this.initLast();
+    const ref = this.ref();
+    const onErr = e => { this.status = String((e && e.code) || '').includes('permission') ? 'lost' : 'error'; this.err = fbErr(e); refreshAfterSync(); };
+    this.unsubs.push(ref.onSnapshot(s => this.onRoot(s), onErr));
+    this.unsubs.push(ref.collection('days').where('date', '>=', addDays(todayKey(), -400)).onSnapshot(s => this.onDays(s), onErr));
+    this.unsubs.push(ref.collection('workouts').onSnapshot(s => this.onWorkouts(s), onErr));
+  },
+  stop() {
+    this.unsubs.forEach(u => { try { u(); } catch (e) { /* уже отписано */ } });
+    this.unsubs = []; this.cid = null; this.ready = false; this.status = 'off'; this.err = '';
+    clearTimeout(this.timer); clearTimeout(this.retry);
+  },
+  initLast() {
+    this.last = {};
+    ROOT.forEach(f => { this.last['r:' + f] = jroot(f); });
+    for (const k in S.days) this.last['d:' + k] = jday(S.days[k]);
+    S.workouts.forEach(w => { this.last['w:' + w.id] = jwo(w); });
+  },
+  // помечает изменённые части временем изменения; вызывается при каждом сохранении
+  touch(full) {
+    if (!this.cid) return;
+    const now = Date.now(); S.u = S.u || {};
+    const chk = (key, j, fn) => { if (this.last[key] !== j) { this.last[key] = j; fn(); } };
+    ROOT.forEach(f => chk('r:' + f, jroot(f), () => { S.u[f] = now; }));
+    const keys = full ? Object.keys(S.days) : [ui.date, todayKey(), addDays(todayKey(), -1)].concat(this.touchDays);
+    this.touchDays = [];
+    new Set(keys).forEach(k => { const d = S.days[k]; if (d) chk('d:' + k, jday(d), () => { d.u = now; }); });
+    S.workouts.forEach(w => chk('w:' + w.id, jwo(w), () => { w.u = now; }));
+    this.schedule(1200);
+  },
+  schedule(ms) { clearTimeout(this.timer); this.timer = setTimeout(() => this.push(), ms); },
+  async push() {
+    if (!this.cid || !this.ready || this.status === 'lost') return;
+    const ref = this.ref(), jobs = [], by = this.role, now = Date.now(), coach = this.role === 'coach';
+    const track = (keys, p) => {
+      keys.forEach(([k, j]) => { this.inflight[k] = j; });
+      jobs.push(p.then(() => { keys.forEach(([k, j]) => { this.shadow[k] = j; }); })
+        .finally(() => { keys.forEach(([k, j]) => { if (this.inflight[k] === j) delete this.inflight[k]; }); }));
+    };
+    const dirty = (key, j) => j !== this.shadow[key] && this.inflight[key] !== j;
+    // общие поля: профиль, программа, вес, замеры, свои продукты и упражнения
+    const upd = {}, rk = [];
+    ROOT.forEach(f => {
+      const key = 'r:' + f, j = jroot(f), lu = S.u && S.u[f];
+      if (!dirty(key, j) || (coach && !lu)) return;
+      upd['d.' + f] = JSON.parse(j); upd['u.' + f] = lu || now; rk.push([key, j]);
+    });
+    if (rk.length) { upd.seen = now; track(rk, ref.update(upd)); }
+    // дни
+    for (const k in S.days) {
+      const d = S.days[k], key = 'd:' + k, j = jday(d);
+      if (!dirty(key, j) || (coach && !d.u)) continue;
+      const data = JSON.parse(j); data.date = k; data.u = d.u || now; data.sb = by;
+      track([[key, j]], ref.collection('days').doc(k).set(data));
+    }
+    // тренировки и удалённые тренировки
+    const ids = new Set();
+    S.workouts.forEach(w => {
+      ids.add(w.id); const key = 'w:' + w.id, j = jwo(w);
+      if (!dirty(key, j) || (coach && !w.u)) return;
+      const data = JSON.parse(j); data.u = w.u || now; data.sb = by;
+      track([[key, j]], ref.collection('workouts').doc(w.id).set(data));
+    });
+    Object.keys(this.shadow).forEach(key => {
+      if (!key.startsWith('w:') || this.shadow[key] === 'DEL' || ids.has(key.slice(2)) || this.inflight[key] === 'DEL') return;
+      track([[key, 'DEL']], ref.collection('workouts').doc(key.slice(2)).set({ del: true, u: now, sb: by }));
+    });
+    if (!jobs.length) { this.status = 'ok'; refreshSyncLine(); return; }
+    this.status = 'pending'; refreshSyncLine();
+    const res = await Promise.allSettled(jobs);
+    if (!this.cid) return;
+    lsSet(this.shKey(), JSON.stringify(this.shadow));
+    const bad = res.find(r => r.status === 'rejected');
+    if (bad) {
+      this.status = String((bad.reason && bad.reason.code) || '').includes('permission') ? 'lost' : 'error';
+      this.err = fbErr(bad.reason);
+      clearTimeout(this.retry); if (this.status === 'error') this.retry = setTimeout(() => this.push(), 20000);
+    } else this.status = 'ok';
+    refreshSyncLine();
+  },
+  onRoot(snap) {
+    if (!snap.exists) { this.status = 'lost'; this.err = 'Карточка удалена тренером.'; refreshAfterSync(); return; }
+    const doc = snap.data() || {}, data = doc.d || {}, us = doc.u || {};
+    let ch = false;
+    if (this.role === 'client') {
+      const ai = doc.ai && doc.ai.key ? { key: doc.ai.key, model: doc.ai.model || '' } : null;
+      if (cj(ai) !== cj(S.ai || null)) { S.ai = ai; ch = true; }
+      const me = FB.auth && FB.auth.currentUser;
+      if (doc.ownerUid && me && doc.ownerUid !== me.uid) { this.status = 'lost'; this.err = 'Тренер выдал новый код — введите его в «Профиле».'; }
+      if (S.link && doc.name && S.link.name !== doc.name) { S.link.name = doc.name; ch = true; }
+    }
+    ROOT.forEach(f => {
+      if (!(f in data)) return;
+      const key = 'r:' + f, j = cj(data[f]), ru = us[f] || 0, lu = (S.u && S.u[f]) || 0;
+      if (j === jroot(f)) { this.shadow[key] = j; return; }
+      if (ru > lu) {
+        S[f] = f === 'profile' ? Object.assign(blankProfile(), data[f] || {}) : (data[f] == null ? (f === 'program' ? S[f] : []) : data[f]);
+        S.u = S.u || {}; S.u[f] = ru; this.shadow[key] = j; this.last[key] = jroot(f); ch = true;
+      }
+    });
+    this.got.root = true; this.after(ch);
+  },
+  onDays(snap) {
+    let ch = false;
+    snap.docChanges().forEach(c => {
+      if (c.type === 'removed' || (c.doc.metadata && c.doc.metadata.hasPendingWrites)) return;
+      const k = c.doc.id, r = c.doc.data() || {}, ru = r.u || 0, local = S.days[k], key = 'd:' + k;
+      const body = strip(r, ['u', 'date', 'sb']), j = cj(body);
+      if (local && j === jday(local)) { this.shadow[key] = j; if (ru > (local.u || 0)) local.u = ru; return; }
+      if (!local || ru > (local.u || 0)) {
+        if (!Array.isArray(body.items)) body.items = [];
+        S.days[k] = Object.assign(body, { u: ru }); this.shadow[key] = j; this.last[key] = jday(S.days[k]); ch = true;
+      }
+    });
+    this.got.days = true; this.after(ch);
+  },
+  onWorkouts(snap) {
+    let ch = false;
+    snap.docChanges().forEach(c => {
+      if (c.type === 'removed' || (c.doc.metadata && c.doc.metadata.hasPendingWrites)) return;
+      const id = c.doc.id, r = c.doc.data() || {}, ru = r.u || 0, key = 'w:' + id;
+      const i = S.workouts.findIndex(w => w.id === id), local = i >= 0 ? S.workouts[i] : null;
+      if (r.del) {
+        if (!local || (local.u || 0) <= ru) { if (local) { S.workouts.splice(i, 1); ch = true; } this.shadow[key] = 'DEL'; delete this.last[key]; }
+        return;
+      }
+      const body = strip(r, ['u', 'sb', 'del']); body.id = id; const j = cj(body);
+      if (local && j === jwo(local)) { this.shadow[key] = j; if (ru > (local.u || 0)) local.u = ru; return; }
+      if (!local || ru > (local.u || 0)) {
+        if (!Array.isArray(body.ex)) body.ex = [];
+        const w = Object.assign(body, { u: ru });
+        if (local) S.workouts[i] = w; else S.workouts.push(w);
+        this.shadow[key] = j; this.last[key] = jwo(w); ch = true;
+      }
+    });
+    this.got.wo = true; this.after(ch);
+  },
+  after(ch) {
+    if (!this.cid) return;
+    if (ch) lsSet(storeKey(), JSON.stringify(S));
+    lsSet(this.shKey(), JSON.stringify(this.shadow));
+    const wasReady = this.ready;
+    if (!wasReady && this.got.root && this.got.days && this.got.wo) {
+      this.ready = true; if (this.status !== 'lost') this.status = 'ok';
+      if (this.role === 'client') this.ref().update({ seen: Date.now() }).catch(() => { });
+    }
+    if (this.ready) this.schedule(wasReady ? 1500 : 300);
+    if (ch || !wasReady) refreshAfterSync(); else refreshSyncLine();
+  }
+};
+
+/* ---------- Тренер ---------- */
+const AI_MODELS = [['google/gemini-2.5-flash', 'Gemini 2.5 Flash — рекомендую'], ['google/gemini-2.5-flash-lite', 'Gemini 2.5 Flash-Lite — дешевле, чуть менее точно'], ['anthropic/claude-haiku-4.5', 'Claude Haiku 4.5 — дороже']];
+const DEFAULT_MODEL = AI_MODELS[0][0];
+const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function genCode() { const a = new Uint32Array(6); crypto.getRandomValues(a); let s = ''; a.forEach(x => { s += CODE_ABC[x % CODE_ABC.length]; }); return s; }
+function ago(ts) {
+  if (!ts) return 'ещё не заходила';
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 2) return 'только что'; if (m < 60) return m + ' мин назад';
+  const h = Math.round(m / 60); if (h < 24) return h + ' ч назад';
+  const d = Math.round(h / 24); if (d === 1) return 'вчера'; return d + ' ' + plural(d, 'день', 'дня', 'дней') + ' назад';
+}
+const Coach = {
+  async login(email, pass, create) {
+    if (!FB.init()) throw new Error('Нет связи с сервером. Проверьте интернет.');
+    if (FB.auth.currentUser) await FB.auth.signOut();
+    const cred = create ? await FB.auth.createUserWithEmailAndPassword(email, pass) : await FB.auth.signInWithEmailAndPassword(email, pass);
+    if (create) await FB.db.collection('coaches').doc(cred.user.uid).set({ email, createdAt: Date.now() }, { merge: true });
+  },
+  load() {
+    const uid = CO.user.uid;
+    FB.db.collection('coaches').doc(uid).get().then(d => {
+      const ai = (d.exists && d.data().ai) || {};
+      CO.ai = { key: ai.key || '', model: ai.model || DEFAULT_MODEL };
+      if (!CO.cur) render();
+    }).catch(() => { });
+    if (CO.unsub) CO.unsub();
+    CO.unsub = FB.db.collection('clients').where('coachUid', '==', uid).onSnapshot(s => {
+      CO.clients = s.docs.map(d => {
+        const x = d.data() || {}, ws = (x.d && x.d.weights) || [];
+        return { id: d.id, name: x.name || 'Без имени', linked: !!x.ownerUid, invite: x.invite || '', seen: x.seen || 0, createdAt: x.createdAt || 0, weight: ws.length ? ws[ws.length - 1].kg : null };
+      }).sort((a, b) => a.createdAt - b.createdAt);
+      CO.ready = true; CO.err = '';
+      const want = lsGet('tarelka-coach-cur');
+      if (!CO.cur && !CO.autoOpened && want && CO.clients.some(c => c.id === want)) { CO.autoOpened = true; Coach.open(want); return; }
+      CO.autoOpened = true;
+      if (!CO.cur) render(); else refreshSyncLine();
+    }, e => { CO.err = fbErr(e); CO.ready = true; if (!CO.cur) render(); });
+  },
+  async newInvite(cid) {
+    let code = genCode();
+    for (let i = 0; i < 5; i++) { const ex = await FB.db.collection('invites').doc(code).get(); if (!ex.exists) break; code = genCode(); }
+    await FB.db.collection('invites').doc(code).set({ clientId: cid, coachUid: CO.user.uid, createdAt: Date.now() });
+    return code;
+  },
+  async addClient(name) {
+    const ref = FB.db.collection('clients').doc();
+    await ref.set({ coachUid: CO.user.uid, ownerUid: null, name, invite: '', createdAt: Date.now(), seen: 0, d: {}, u: {},
+      ai: CO.ai.key ? { key: CO.ai.key, model: CO.ai.model || DEFAULT_MODEL } : null });
+    const code = await Coach.newInvite(ref.id);
+    await ref.update({ invite: code });
+    return code;
+  },
+  async resetCode(cid) {
+    const c = CO.clients.find(x => x.id === cid);
+    const code = await Coach.newInvite(cid);
+    await FB.db.collection('clients').doc(cid).update({ invite: code, ownerUid: null });
+    if (c && c.invite) FB.db.collection('invites').doc(c.invite).delete().catch(() => { });
+    return code;
+  },
+  async remove(cid) {
+    const c = CO.clients.find(x => x.id === cid);
+    await FB.db.collection('clients').doc(cid).delete();
+    if (c && c.invite) FB.db.collection('invites').doc(c.invite).delete().catch(() => { });
+    lsSet(KEY + '-c-' + cid, null);
+  },
+  async saveAi(key, model) {
+    CO.ai = { key, model };
+    await FB.db.collection('coaches').doc(CO.user.uid).set({ ai: { key, model } }, { merge: true });
+    await Promise.all(CO.clients.map(c => FB.db.collection('clients').doc(c.id).update({ ai: key ? { key, model } : null })));
+  },
+  open(cid) {
+    Sync.stop(); CO.cur = cid; lsSet('tarelka-coach-cur', cid);
+    S = migrate(loadState()) || blankState(); S.demo = false;
+    Object.assign(ui, { tab: 'today', date: todayKey(), sheet: null, confirm: null, editProg: false, report: '', backup: '' });
+    Sync.start(cid, 'coach'); render(); window.scrollTo(0, 0);
+  },
+  close() { Sync.stop(); stopRest(); CO.cur = null; lsSet('tarelka-coach-cur', null); S = blankState(); ui.sheet = null; renderSheet(); render(); window.scrollTo(0, 0); },
+  async logout() {
+    Sync.stop(); if (CO.unsub) CO.unsub();
+    Object.assign(CO, { unsub: null, cur: null, clients: [], user: null, ready: false, autoOpened: false });
+    lsSet('tarelka-coach-cur', null);
+    try { await FB.auth.signOut(); } catch (e) { /* уже вышли */ }
+    render();
+  }
+};
+function coachBar() {
+  const c = CO.clients.find(x => x.id === CO.cur);
+  return `<div class="coachbar"><span class="grow"><b>${esc(c ? c.name : 'Подопечная')}</b><span class="small muted" id="syncLine" style="display:block">${esc(syncText())}</span></span><button class="btn btn-ghost btn-sm" data-a="coachBack">Все подопечные</button></div>`;
+}
+function renderCoach() {
+  const back = `<button class="btn-link" data-a="toClient">Перейти в режим дневника</button>`;
+  if (!FB.init()) return `<header class="hd"><h1>Режим тренера</h1></header><div class="banner plain"><p>Нет связи с сервером. Проверьте интернет и откройте приложение снова.</p></div>${back}`;
+  if (!CO.authChecked) return `<header class="hd"><h1>Режим тренера</h1></header><p class="muted">Загрузка…</p>`;
+  if (!CO.user) {
+    return `<header class="hd"><h1>Режим тренера</h1></header>
+    <section class="card"><h2>Вход для тренера</h2>
+      <div class="field"><label for="coEmail">Почта</label><input id="coEmail" class="input" type="email" autocomplete="username" value="${esc(ui.coEmail || '')}"></div>
+      <div class="field"><label for="coPass">Пароль</label><input id="coPass" class="input" type="password" autocomplete="current-password"></div>
+      ${CO.err ? `<p class="small warn-text">${esc(CO.err)}</p>` : ''}
+      <div class="row"><button class="btn btn-primary grow" data-a="coLogin" ${CO.busy ? 'disabled' : ''}>Войти</button><button class="btn btn-ghost grow" data-a="coSignup" ${CO.busy ? 'disabled' : ''}>Создать аккаунт</button></div>
+      <p class="hint">Аккаунт создаётся один раз. Пароль — не короче 6 символов.</p></section>${back}`;
+  }
+  const list = CO.clients.map(c => `<section class="card"><div class="sec-head"><h2>${esc(c.name)}</h2><span class="pill ${c.linked ? 'ok' : ''}">${c.linked ? 'подключена' : 'ждёт код'}</span></div>
+    ${c.linked ? `<p class="small muted">В приложении: ${ago(c.seen)}${c.weight ? ' · вес ' + f1(c.weight) + ' кг' : ''}</p>` : `<p class="small muted">Код для подключения:</p><p class="code-big">${esc(c.invite || '…')}</p><p class="hint">Подопечная вводит его в «Профиле» → «Тренер».</p>`}
+    <div class="row"><button class="btn btn-primary btn-sm grow" data-a="coOpen" data-id="${c.id}">Открыть дневник</button>${!c.linked && c.invite ? `<button class="btn btn-ghost btn-sm" data-a="coCopy" data-code="${esc(c.invite)}">Скопировать код</button>` : ''}</div>
+    ${CO.confirm === 'del:' + c.id ? `<div class="confirm"><p>Удалить карточку «${esc(c.name)}»? У тренера пропадёт доступ к её дневнику, у неё на телефоне записи останутся.</p><div class="row"><button class="btn btn-warn btn-sm" data-a="coDelYes" data-id="${c.id}">Удалить</button><button class="btn-link" data-a="coNo">Отмена</button></div></div>`
+      : CO.confirm === 'code:' + c.id ? `<div class="confirm"><p>Выдать новый код? Старый перестанет работать, а телефон подопечной отключится, пока она не введёт новый.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="coNewCodeYes" data-id="${c.id}">Выдать код</button><button class="btn-link" data-a="coNo">Отмена</button></div></div>`
+      : `<div class="row"><button class="btn-link" data-a="coNewCode" data-id="${c.id}">Новый код</button><button class="btn-link warn-text" data-a="coDel" data-id="${c.id}">Удалить</button></div>`}</section>`).join('');
+  const aiOpts = AI_MODELS.map(([v, l]) => `<option value="${v}" ${(CO.ai.model || DEFAULT_MODEL) === v ? 'selected' : ''}>${esc(l)}</option>`).join('');
+  return `<header class="hd"><h1>Мои подопечные</h1></header>
+    ${CO.err ? `<div class="banner plain"><p>${esc(CO.err)}</p></div>` : ''}
+    ${!CO.ready ? '<p class="muted">Загружаю список…</p>' : list || '<p class="muted">Пока никого нет. Добавьте первую подопечную.</p>'}
+    <section class="card"><h2>Новая подопечная</h2><div class="row"><input id="coNewName" class="input grow" placeholder="Имя" autocomplete="off"><button class="btn btn-primary" data-a="coAdd" ${CO.busy ? 'disabled' : ''}>Добавить</button></div>
+      <p class="hint">Появится код из 6 символов. Отправьте его подопечной.</p></section>
+    <section class="card"><h2>Распознавание еды (ИИ)</h2>
+      <p class="small muted">${CO.ai.key ? 'Ключ сохранён: …' + esc(CO.ai.key.slice(-4)) : 'Ключ не добавлен — фото и свободный текст распознаваться не будут.'}</p>
+      <div class="field"><label for="aiKey">Ключ OpenRouter</label><input id="aiKey" class="input" type="password" autocomplete="off" placeholder="${CO.ai.key ? 'Оставьте пустым, чтобы не менять' : 'sk-or-v1-…'}"></div>
+      <div class="field"><label for="aiModel">Модель</label><select id="aiModel" class="input">${aiOpts}</select></div>
+      <div class="row"><button class="btn btn-primary grow" data-a="coSaveAi" ${CO.busy ? 'disabled' : ''}>Сохранить</button>${CO.ai.key ? `<button class="btn btn-warn" data-a="coDelAi">Удалить ключ</button>` : ''}</div>
+      <p class="hint">Ключ хранится в вашей базе Firebase и передаётся в приложения подопечных. Поставьте на него месячный лимит в OpenRouter.</p></section>
+    <button class="btn btn-ghost" data-a="coLogout">Выйти из аккаунта тренера</button>
+    <p class="small muted">Вы вошли как ${esc(CO.user.email || '')}</p>${back}`;
+}
+function linkCard() {
+  if (MODE === 'coach') return '';
+  if (!S.link) {
+    return `<section class="card"><h2>Тренер</h2><p class="small muted">Введите код, который прислал тренер. Тренер будет видеть ваш дневник, а программа тренировок будет обновляться сама.</p>
+      <div class="row"><input id="linkCode" class="input grow code-in" placeholder="Например, K7M2QX" autocomplete="off" autocapitalize="characters" maxlength="12"><button class="btn btn-primary" data-a="linkCode" ${ui.linkBusy ? 'disabled' : ''}>${ui.linkBusy ? 'Подключаю…' : 'Подключиться'}</button></div>
+      <button class="btn-link" data-a="toCoach">Я тренер — войти</button></section>`;
+  }
+  return `<section class="card"><div class="sec-head"><h2>Тренер</h2><span class="pill ${Sync.status === 'ok' ? 'ok' : Sync.status === 'lost' ? 'warn' : ''}">${Sync.status === 'lost' ? 'нет связи' : 'подключено'}</span></div>
+    <p class="small muted" id="syncLine">${esc(syncText())}</p>
+    ${S.ai ? '<p class="small muted">Распознавание еды по фото включено.</p>' : ''}
+    ${Sync.status === 'lost' ? `<div class="row"><input id="linkCode" class="input grow code-in" placeholder="Новый код" autocomplete="off" maxlength="12"><button class="btn btn-primary" data-a="linkCode" ${ui.linkBusy ? 'disabled' : ''}>Подключиться</button></div>` : ''}
+    ${ui.confirm === 'unlink' ? `<div class="confirm"><p>Отключиться от тренера? Записи на телефоне останутся, но тренер перестанет их видеть.</p><div class="row"><button class="btn btn-warn btn-sm" data-a="unlinkYes">Отключиться</button><button class="btn btn-ghost btn-sm" data-a="confirmNo">Отмена</button></div></div>` : `<button class="btn-link" data-a="unlink">Отключиться от тренера</button>`}</section>`;
+}
+
+/* ---------- ИИ: распознавание еды ---------- */
+function aiCfg() { const c = MODE === 'coach' ? CO.ai : S.ai; return c && c.key ? { key: c.key, model: c.model || DEFAULT_MODEL } : null; }
+const httpCbs = {};
+window.__httpDone = (id, code, text) => { const cb = httpCbs[id]; if (cb) { delete httpCbs[id]; cb({ code, text }); } };
+function httpPost(url, headers, body) {
+  if (NB && typeof NB.httpPost === 'function') {
+    return new Promise(res => {
+      const id = uid(); httpCbs[id] = res;
+      try { NB.httpPost(id, url, JSON.stringify(headers), body); } catch (e) { delete httpCbs[id]; res({ code: -1, text: String(e) }); }
+      setTimeout(() => { if (httpCbs[id]) { delete httpCbs[id]; res({ code: -1, text: 'timeout' }); } }, 100000);
+    });
+  }
+  return fetch(url, { method: 'POST', headers, body }).then(async r => ({ code: r.status, text: await r.text() })).catch(e => ({ code: -1, text: String(e) }));
+}
+const AI_PROMPT = 'Ты помогаешь вести дневник питания. Определи все продукты, блюда и напитки, оцени массу каждой позиции в граммах (для напитков — в миллилитрах) и посчитай калории, белки, жиры и углеводы именно на эту массу. Ориентируйся на типичные рецепты и порции, принятые в России. Если блюдо состоит из явно отдельных частей (гарнир, мясо, соус, хлеб) — перечисли их отдельно. Названия — по-русски, коротко, с уточнением способа приготовления, если он виден. Если еды нет, верни пустой список.\nОтвет — только JSON без пояснений и без markdown: {"items":[{"name":"Гречка варёная","grams":150,"kcal":165,"p":6.3,"f":1.7,"c":32}],"comment":"одно короткое предложение: что учтено или в чём неуверенность"}';
+async function aiRecognize(text, image) {
+  const cfg = aiCfg(); if (!cfg) throw new Error('ИИ не подключён.');
+  const content = [];
+  if (text) content.push({ type: 'text', text: (image ? 'Подсказка: ' : 'Что съедено: ') + text });
+  if (image) content.push({ type: 'image_url', image_url: { url: image } });
+  if (!image) content.push({ type: 'text', text: 'Если масса не указана, оцени обычную порцию.' });
+  const body = JSON.stringify({ model: cfg.model, temperature: 0.2, max_tokens: 1500, response_format: { type: 'json_object' },
+    messages: [{ role: 'system', content: AI_PROMPT }, { role: 'user', content }] });
+  const r = await httpPost('https://openrouter.ai/api/v1/chat/completions',
+    { 'Authorization': 'Bearer ' + cfg.key, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/garenaalex322-dotcom/juliya', 'X-Title': 'Tarelka i shtanga' }, body);
+  if (r.code === 401 || r.code === 403) throw new Error('Ключ ИИ не подходит. Тренеру нужно проверить ключ OpenRouter.');
+  if (r.code === 402) throw new Error('На балансе OpenRouter закончились деньги или исчерпан лимит ключа.');
+  if (r.code === 429) throw new Error('Слишком много запросов. Попробуйте через минуту.');
+  if (r.code < 0) throw new Error('Нет связи с сервисом ИИ. Проверьте интернет.');
+  if (r.code < 200 || r.code >= 300) throw new Error('Сервис ИИ ответил ошибкой (' + r.code + '). Попробуйте ещё раз.');
+  let msg = '';
+  try { const j = JSON.parse(r.text); msg = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || ''; } catch (e) { msg = ''; }
+  if (Array.isArray(msg)) msg = msg.map(x => x.text || '').join('');
+  const m = String(msg).match(/\{[\s\S]*\}/);
+  let data = null; try { data = m ? JSON.parse(m[0]) : null; } catch (e) { data = null; }
+  if (!data || !Array.isArray(data.items)) throw new Error('ИИ ответил непонятно. Попробуйте ещё раз или напишите текстом.');
+  const items = data.items.map(it => ({ name: String(it.name || '').trim().slice(0, 60), grams: Math.round(toNum(it.grams) || 0), kcal: toNum(it.kcal) || 0, p: toNum(it.p) || 0, f: toNum(it.f) || 0, c: toNum(it.c) || 0 }))
+    .filter(it => it.name && it.grams > 0 && it.kcal >= 0 && it.kcal < 5000);
+  return { items, comment: String(data.comment || '').slice(0, 200) };
+}
+function aiFood(it) {
+  const g = it.grams, per = v => Math.round(Math.max(0, v) / g * 1000) / 10;
+  return { id: 'ai' + uid(), name: it.name, kcal: per(it.kcal), p: per(it.p), f: per(it.f), c: per(it.c), portion: g, piece: 0, ai: true };
+}
+async function shrinkImage(file) {
+  let src;
+  try { src = await createImageBitmap(file); }
+  catch (e) {
+    src = await new Promise((res, rej) => { const u = URL.createObjectURL(file), im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = u; });
+  }
+  const w = src.width, h = src.height, sc = Math.min(1, 1024 / Math.max(w, h));
+  const c = document.createElement('canvas'); c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.8);
+}
+async function runAi(text, file) {
+  if (ui.aiBusy) return;
+  ui.aiBusy = true; ui.aiNote = ''; renderSheet();
+  try {
+    let img = null;
+    if (file) { img = await shrinkImage(file); ui.aiPhoto = img; renderSheet(); }
+    const r = await aiRecognize(text, img);
+    if (!r.items.length) toast(file ? 'На фото не нашлось еды. Попробуйте снять ближе или напишите текстом.' : 'ИИ не смог разобрать описание.');
+    r.items.forEach(it => { ui.extra.push({ key: 'x|' + uid(), food: aiFood(it), grams: it.grams, ai: true }); });
+    if (!file && r.items.length) ui.aiText = ui.text;
+    ui.aiNote = r.comment;
+  } catch (e) { toast(e.message || 'Не получилось распознать'); }
+  ui.aiBusy = false; if (ui.sheet === 'add') renderSheet();
 }
 
 /* ================= Таймер отдыха ================= */
@@ -917,10 +1381,14 @@ function renderRest() {
 /* ================= Отрисовка ================= */
 let keepOn = false, renderedDay = todayKey();
 function render() {
-  const v = $('#view');
-  renderedDay = todayKey();
-  v.innerHTML = ui.tab === 'today' ? renderToday() : ui.tab === 'train' ? renderTrain() : ui.tab === 'progress' ? renderProgress() : ui.tab === 'kb' ? renderKb() : renderProfile();
-  $('#tabs').innerHTML = tabsHtml();
+  const v = $('#view'), nav = $('.tabs');
+  renderedDay = todayKey(); pendingRender = false;
+  if (MODE === 'coach' && !CO.cur) { nav.hidden = true; v.innerHTML = renderCoach(); }
+  else {
+    nav.hidden = false;
+    v.innerHTML = ui.tab === 'today' ? renderToday() : ui.tab === 'train' ? renderTrain() : ui.tab === 'progress' ? renderProgress() : ui.tab === 'kb' ? renderKb() : renderProfile();
+    $('#tabs').innerHTML = tabsHtml();
+  }
   const want = !!S.session;
   if (want !== keepOn) { keepOn = want; nb('keepScreenOn', want); }
 }
@@ -933,7 +1401,7 @@ function renderSheet() {
   sh.innerHTML = (SHEETS[ui.sheet] || (() => ''))();
   if (ui.sheet === 'add') { renderPreview(); renderSearch(); }
 }
-function closeSheet() { const was = ui.sheet; ui.sheet = null; ui.confirm = ui.confirm === 'progImport' ? null : ui.confirm; ui.tplId = null; ui.pickNew = false; renderSheet(); if (was === 'pick' || was === 'ex' || was === 'workout' || was === 'templates' || was === 'import') render(); }
+function closeSheet() { const was = ui.sheet; ui.sheet = null; ui.confirm = ui.confirm === 'progImport' ? null : ui.confirm; ui.tplId = null; ui.pickNew = false; renderSheet(); if (pendingRender || was === 'pick' || was === 'ex' || was === 'workout' || was === 'templates' || was === 'import') render(); }
 
 /* ================= Действия ================= */
 const A = {
@@ -1024,7 +1492,7 @@ const A = {
   finishYes() {
     const s = S.session; if (!s) return; const min = clamp(Math.round(toNum($('#finMin').value) || 60), 1, 600);
     mutate(() => {
-      S.workouts.push({ id: s.id || uid(), date: s.date || todayKey(), dayId: s.dayId, dayName: s.dayName, note: (s.note || '').trim(), minutes: min,
+      S.workouts.push({ id: s.id || uid(), date: s.date || todayKey(), dayId: s.dayId, dayName: s.dayName, note: (s.note || '').trim(), minutes: min, author: MODE === 'coach' ? 'coach' : 'client',
         ex: s.ex.map(e => ({ exId: e.exId, name: e.name, target: e.target, sets: e.sets.filter(x => x.done).map(x => ({ w: x.w || '', r: x.r || '', done: true })) })).filter(e => e.sets.length) });
       S.session = null;
     });
@@ -1124,9 +1592,73 @@ const A = {
   makeBackup() { ui.backup = 'BAK1:' + b64e(JSON.stringify(S)); render(); },
   copyBackup() { copyText(ui.backup, $('#backupTa')); },
   restore() { const r = decodeCode($('#restoreTa').value, ['BAK1:']); if (!r || !r.data || typeof r.data !== 'object' || !r.data.days) { toast('Код не подходит. Скопируйте его целиком, начиная с BAK1:'); return; } ui.pendingRestore = r.data; ui.confirm = 'restore'; render(); },
-  restoreYes() { const d = ui.pendingRestore; if (!d) return; d.demo = false; S = migrate(d) || blankState(); save(); ui.pendingRestore = null; ui.confirm = null; ui.date = todayKey(); render(); toast('Записи восстановлены'); },
+  restoreYes() { const d = ui.pendingRestore; if (!d) return; d.demo = false; const link = S.link, ai = S.ai; S = migrate(d) || blankState(); S.link = link; S.ai = ai; Sync.last = {}; save(true); ui.pendingRestore = null; ui.confirm = null; ui.date = todayKey(); render(); toast('Записи восстановлены'); },
   wipe() { ui.confirm = 'wipe'; render(); },
-  wipeYes() { S = blankState(); save(); ui.confirm = null; ui.report = ''; ui.backup = ''; ui.date = todayKey(); render(); toast('Все данные удалены'); }
+  wipeYes() { const linked = !!S.link; Sync.stop(); S = blankState(); save(); if (linked && FB.ok) FB.auth.signOut().catch(() => { }); ui.confirm = null; ui.report = ''; ui.backup = ''; ui.date = todayKey(); render(); toast('Все данные удалены'); },
+  hideLink() { lsSet('tarelka-hide-link', '1'); render(); },
+  async linkCode() {
+    const code = (($('#linkCode') || {}).value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (code.length < 4) { toast('Введите код от тренера'); return; }
+    if (!FB.init()) { toast('Нет связи с сервером. Проверьте интернет.'); return; }
+    ui.linkBusy = true; render();
+    try {
+      let user = FB.auth.currentUser;
+      if (!user || !user.isAnonymous) { if (user) await FB.auth.signOut(); user = (await FB.auth.signInAnonymously()).user; }
+      const inv = await FB.db.collection('invites').doc(code).get();
+      if (!inv.exists) throw new Error('Код не найден. Проверьте буквы или попросите у тренера новый.');
+      const { clientId, coachUid } = inv.data();
+      await FB.db.collection('clients').doc(clientId).update({ ownerUid: user.uid, linkedAt: Date.now() });
+      if (S.demo) S = blankState();
+      S.link = { clientId, coachUid, at: Date.now() };
+      Sync.stop(); save(); Sync.start(clientId, 'client');
+      lsSet('tarelka-hide-link', '1');
+      toast('Подключено к тренеру');
+    } catch (e) { toast(e && e.code ? fbErr(e) : (e.message || String(e))); }
+    ui.linkBusy = false; render();
+  },
+  unlink() { ui.confirm = 'unlink'; render(); },
+  unlinkYes() { Sync.stop(); lsSet(KEY + '-sh-client-' + (S.link && S.link.clientId), null); delete S.link; S.ai = null; save(); if (FB.ok) FB.auth.signOut().catch(() => { }); ui.confirm = null; render(); toast('Связь с тренером отключена'); },
+  toCoach() {
+    if (S.link) { toast('Этот телефон подключён к тренеру как телефон подопечной. Сначала отключитесь в «Профиле».'); return; }
+    MODE = 'coach'; lsSet('tarelka-mode', 'coach'); S = blankState(); CO.err = ''; stopRest(); ui.sheet = null; renderSheet();
+    if (FB.init()) { const u = FB.auth.currentUser; if (u && u.isAnonymous) FB.auth.signOut().catch(() => { }); else if (u && !CO.user) { CO.user = u; Coach.load(); } }
+    render(); window.scrollTo(0, 0);
+  },
+  toClient() { Sync.stop(); stopRest(); if (CO.unsub) { CO.unsub(); CO.unsub = null; } CO.cur = null; CO.user = null; CO.ready = false; MODE = 'client'; lsSet('tarelka-mode', 'client'); S = migrate(loadState()) || demoState(); Object.assign(ui, { tab: 'today', date: todayKey(), confirm: null }); if (FB.ok && FB.auth.currentUser && !FB.auth.currentUser.isAnonymous) FB.auth.signOut().catch(() => { }); render(); window.scrollTo(0, 0); },
+  async coLogin(b, e, create) {
+    const email = ($('#coEmail').value || '').trim(), pass = $('#coPass').value || '';
+    ui.coEmail = email;
+    if (!email || !pass) { CO.err = 'Введите почту и пароль.'; render(); return; }
+    CO.busy = true; CO.err = ''; render();
+    try { await Coach.login(email, pass, !!create); } catch (err) { CO.err = fbErr(err); }
+    CO.busy = false; render();
+  },
+  coSignup(b, e) { return A.coLogin(b, e, true); },
+  async coAdd() {
+    const name = ($('#coNewName').value || '').trim(); if (!name) { toast('Впишите имя подопечной'); return; }
+    CO.busy = true; render();
+    try { const code = await Coach.addClient(name); toast('Добавлено. Код: ' + code); } catch (e) { toast(fbErr(e)); }
+    CO.busy = false; render();
+  },
+  coOpen(b) { Coach.open(b.dataset.id); },
+  coCopy(b) { copyText(b.dataset.code); },
+  coNewCode(b) { CO.confirm = 'code:' + b.dataset.id; render(); },
+  async coNewCodeYes(b) { CO.confirm = null; try { const code = await Coach.resetCode(b.dataset.id); toast('Новый код: ' + code); } catch (e) { toast(fbErr(e)); } render(); },
+  coDel(b) { CO.confirm = 'del:' + b.dataset.id; render(); },
+  async coDelYes(b) { CO.confirm = null; try { await Coach.remove(b.dataset.id); toast('Карточка удалена'); } catch (e) { toast(fbErr(e)); } render(); },
+  coNo() { CO.confirm = null; render(); },
+  async coSaveAi() {
+    const key = ($('#aiKey').value || '').trim() || CO.ai.key, model = $('#aiModel').value || DEFAULT_MODEL;
+    if (key && !/^sk-or-/.test(key)) { toast('Ключ OpenRouter начинается с «sk-or-». Проверьте, что скопировали его целиком.'); return; }
+    CO.busy = true; render();
+    try { await Coach.saveAi(key, model); toast(key ? 'Ключ сохранён и отправлен подопечным' : 'Сохранено'); } catch (e) { toast(fbErr(e)); }
+    CO.busy = false; render();
+  },
+  async coDelAi() { CO.busy = true; render(); try { await Coach.saveAi('', CO.ai.model || DEFAULT_MODEL); toast('Ключ удалён'); } catch (e) { toast(fbErr(e)); } CO.busy = false; render(); },
+  coLogout() { Coach.logout(); },
+  coachBack() { Coach.close(); },
+  aiPhoto() { const i = $('#photoIn'); if (i) i.click(); },
+  aiText() { const t = ui.text.trim(); if (!t) { toast('Напишите, что съели, например: «плов с курицей, половина тарелки»'); const ta = $('#foodText'); if (ta) ta.focus(); return; } runAi(t, null); }
 };
 function newProgEx(e) { const k = e.kind || 'w'; return { id: uid(), exId: e.id, name: e.n, sets: k === 'c' ? 1 : 3, reps: k === 't' ? '30' : k === 'c' ? '20' : '10–12' }; }
 function sessionEx(exId, name, sets, reps, target) {
@@ -1170,7 +1702,8 @@ const CH = {
   pf(el) { mutate(() => { S.profile[el.dataset.f] = el.value; }); const nbx = $('#normBox'); if (nbx) nbx.innerHTML = normHtml(); },
   pfManual(el) { mutate(() => { S.profile.manual = el.checked; }); render(); },
   repDetail(el) { ui.repDetail = el.checked; ui.report = ''; },
-  exSel(el) { ui.exSel = el.value; render(); }
+  exSel(el) { ui.exSel = el.value; render(); },
+  photo(el) { const f = el.files && el.files[0]; el.value = ''; if (f) runAi(ui.text.trim(), f); }
 };
 
 document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b || b.disabled) return; const fn = A[b.dataset.a]; if (fn) { e.preventDefault(); fn(b, e); } });
@@ -1184,14 +1717,16 @@ window.appBack = () => {
   if (ui.sheet) { closeSheet(); return true; }
   if (ui.confirm) { ui.confirm = null; render(); return true; }
   if (ui.editProg) { A.progDone(); return true; }
+  if (MODE === 'coach' && !CO.cur) return false;
   if (ui.tab !== 'today') { ui.tab = 'today'; render(); window.scrollTo(0, 0); return true; }
   if (ui.date !== todayKey()) { ui.date = todayKey(); render(); return true; }
+  if (MODE === 'coach' && CO.cur) { Coach.close(); return true; }
   return false;
 };
-window.onSteps = json => { try { nativeSteps = JSON.parse(json) || {}; } catch (e) { return; } if (!ui.sheet) updateActivityCard(); };
+window.onSteps = json => { try { nativeSteps = JSON.parse(json) || {}; } catch (e) { return; } syncPhoneSteps(); if (!ui.sheet && !typing()) updateActivityCard(); };
 window.onStepsStatus = st => { stepsStatus = st; refreshSteps(); if (!ui.sheet) render(); };
 window.onAppResume = () => {
-  refreshSteps();
+  refreshSteps(); syncPhoneSteps();
   if (renderedDay !== todayKey() && ui.date === renderedDay) ui.date = todayKey();
   if (rest) tickRest();
   if (!ui.sheet) render();
@@ -1199,7 +1734,24 @@ window.onAppResume = () => {
 
 const h0 = location.hash.replace('#', '');
 if (['today', 'train', 'progress', 'kb', 'profile'].includes(h0)) ui.tab = h0;
-refreshSteps();
+refreshSteps(); syncPhoneSteps();
 render();
 if (S.session) nb('keepScreenOn', true);
+document.addEventListener('focusout', () => { setTimeout(() => { if (pendingRender && !ui.sheet && !typing()) render(); }, 60); });
+if (FB.init()) {
+  FB.auth.onAuthStateChanged(user => {
+    CO.authChecked = true;
+    if (MODE === 'coach') {
+      const u = user && !user.isAnonymous ? user : null;
+      if (u && (!CO.user || CO.user.uid !== u.uid)) { CO.user = u; CO.err = ''; Coach.load(); }
+      else if (!u && CO.user) { CO.user = null; }
+      if (!CO.cur) render();
+    } else if (S.link && !Sync.cid) {
+      if (user && user.isAnonymous) Sync.start(S.link.clientId, 'client');
+      else { Sync.status = 'lost'; Sync.err = 'Попросите у тренера новый код и введите его в «Профиле».'; }
+      render();
+    }
+  });
+} else CO.authChecked = true;
+window.__app = { get S() { return S; }, Sync, CO };
 })();
