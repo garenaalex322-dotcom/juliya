@@ -43,6 +43,7 @@ const IC = {
   check: sv('<path d="M5.5 12.5l4.2 4.2 8.8-9.4"/>', 20),
   camera: sv('<path d="M4 8.5h3l1.6-2.5h6.8L17 8.5h3v10.5H4z"/><circle cx="12" cy="13.5" r="3.4"/>', 18),
   spark: sv('<path d="M12 3.5l1.9 5.6 5.6 1.9-5.6 1.9L12 18.5l-1.9-5.6L4.5 11l5.6-1.9z"/>', 18), chev: sv('<path d="M9.5 6l6 6-6 6"/>', 18),
+  pause: sv('<path d="M9 6v12M15 6v12"/>', 18), resume: sv('<path d="M8 5.5l11 6.5-11 6.5z"/>', 18),
   play: sv('<path d="M10 4.5h5.5M12.75 4.5v2.2"/><circle cx="12.75" cy="13.5" r="6.8"/><path d="M12.75 10v3.5l2.3 1.6"/>', 18)
 };
 const glassSvg = on => `<svg viewBox="0 0 30 38" width="26" height="34" aria-hidden="true"><path d="M4 3h22l-2.6 30.2a2.5 2.5 0 0 1-2.5 2.3H9.1a2.5 2.5 0 0 1-2.5-2.3z" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
@@ -175,8 +176,8 @@ customProvider = () => S.custom;
 
 const ui = { tab: 'today', date: todayKey(), sheet: null, meal: 'Обед', text: '', q: '', over: {}, hidden: new Set(), extra: [], manual: [], manualFor: null, pv: [], unk: [],
   editId: null, editMeal: null, confirm: null, editProg: false, progCode: '', report: '', repDays: 7, repDetail: false, backup: '', undo: null,
-  pendingImport: null, pendingRestore: null, per: 30, meas: 'waist', exSel: null, kbTab: 'ex', kbQ: '', kbG: '', exId: null, exFrom: null, artId: null,
-  pickFor: null, pickQ: '', pickG: '', pickNew: false, woId: null, tplId: null, finishMin: '' };
+  pendingImport: null, pendingRestore: null, per: 30, meas: 'waist', exSel: null, kbTab: 'ex', kbQ: '', kbG: '', kbE: '', exId: null, exFrom: null, artId: null,
+  pickFor: null, pickQ: '', pickG: '', pickE: '', pickNew: false, woId: null, tplId: null, finishMin: '' };
 
 function mutate(fn) {
   if (S.demo) { const keep = S.program; S = blankState(); S.program = keep; ui.date = todayKey(); toast('Пример очищен. Теперь это ваш дневник.'); }
@@ -557,10 +558,11 @@ function sheetWorkout() {
     <div class="row"><button class="btn btn-primary grow" data-a="woSave">Сохранить</button><button class="btn btn-warn" data-a="woDelete">Удалить</button></div>`;
 }
 function sheetPick() {
-  const list = filterEx(EXERCISES.concat(S.customEx || []), ui.pickQ, ui.pickG);
+  const list = filterEx(EXERCISES.concat(S.customEx || []), ui.pickQ, ui.pickG, ui.pickE);
   return `${sheetHead('Выберите упражнение')}
     <input class="input" type="search" data-in="pickQ" placeholder="Поиск: присед, спина, гантели…" value="${esc(ui.pickQ)}" aria-label="Поиск упражнения">
     <div class="chips scroll">${[['', 'Все']].concat(EX_GROUPS).map(([g, l]) => `<button class="chip" data-a="pickG" data-g="${g}" aria-pressed="${ui.pickG === g}">${esc(l)}</button>`).join('')}</div>
+    ${eqChips('pickE', ui.pickE)}
     <div class="results" id="pickList">${pickListHtml(list)}</div>
     ${ui.pickNew ? `<div class="confirm"><div class="field"><label for="cxName">Название</label><input id="cxName" class="input" value="${esc(ui.pickQ)}"></div>
       <div class="grid2"><div class="field"><label for="cxGroup">Группа</label><select id="cxGroup" class="input">${EX_GROUPS.map(([g, l]) => `<option value="${g}">${esc(l)}</option>`).join('')}</select></div>
@@ -572,10 +574,15 @@ function matchQ(q, hay) {
   const ws = normTxt(q).split(/[^а-яa-z0-9]+/).filter(Boolean); if (!ws.length) return true;
   const h = normTxt(hay); return ws.every(w => h.includes(w.length > 4 ? w.slice(0, Math.max(4, w.length - 2)) : w));
 }
-function filterEx(list, q, g) { return list.filter(e => (!g || e.g === g) && matchQ(q, [e.n, e.m || '', e.eq || '', GROUP[e.g] || ''].join(' '))); }
+const EQ_TYPES = [['', 'Любой инвентарь'], ['bw', 'Свой вес'], ['free', 'Гантели, штанга'], ['machine', 'Тренажёры и блоки'], ['band', 'Резинка']];
+const EQ_RX = { bw: /свой вес|перекладин|брусья|стена|скакалк|тумба|ролик|^скамья$|ступеньк|опора/i, free: /гантел|штанг|гир|гриф|блин/i, machine: /тренаж|блок|кроссовер|гравитрон|смит|дорожк|скотта/i, band: /резинк/i };
+const EQ_WORDS = { bw: 'собственный вес без снаряжения дома', free: 'свободные веса', machine: 'тренажер тренажерный зал', band: 'эспандер лента' };
+const eqTypes = e => Object.keys(EQ_RX).filter(k => EQ_RX[k].test(e.eq || ''));
+function filterEx(list, q, g, t) { return list.filter(e => (!g || e.g === g) && (!t || eqTypes(e).includes(t)) && matchQ(q, [e.n, e.m || '', e.eq || '', GROUP[e.g] || ''].concat(eqTypes(e).map(k => EQ_WORDS[k])).join(' '))); }
+const eqChips = (act, cur) => `<div class="chips scroll">${EQ_TYPES.map(([t, l]) => `<button class="chip" data-a="${act}" data-t="${t}" aria-pressed="${cur === t}">${esc(l)}</button>`).join('')}</div>`;
 function pickListHtml(list) {
   if (!list.length) return `<p class="hint">Ничего не нашлось. Добавьте своё упражнение.</p>`;
-  return list.map(e => `<button class="res" data-a="pickEx" data-id="${esc(e.id)}"><span class="res-main"><span>${esc(e.n)}</span><small>${esc(GROUP[e.g] || '')}${e.eq ? ' · ' + esc(e.eq) : ''}</small></span><span>${IC.plus}</span></button>`).join('');
+  return list.map(e => `<button class="res" data-a="pickEx" data-id="${esc(e.id)}">${thumbHtml(e.id)}<span class="res-main"><span>${esc(e.n)}</span><small>${esc(GROUP[e.g] || '')}${e.eq ? ' · ' + esc(e.eq) : ''}</small></span><span>${IC.plus}</span></button>`).join('');
 }
 function sheetTemplates() {
   return `${sheetHead('Шаблоны программ')}
@@ -591,16 +598,37 @@ function sheetImport() {
 }
 
 /* ================= БАЗА ЗНАНИЙ ================= */
+const hasAnim = id => !!(id && typeof ANIM !== 'undefined' && ANIM.has(id));
+const thumbHtml = id => hasAnim(id) ? `<canvas class="ex-thumb" data-ex="${esc(id)}" width="56" height="56" aria-hidden="true"></canvas>` : `<span class="ex-thumb none" aria-hidden="true">${IC.dumbbell}</span>`;
+let thumbObs = null;
+function drawThumbs(root) {
+  if (typeof ANIM === 'undefined' || !root) return;
+  const cs = root.querySelectorAll('canvas.ex-thumb:not([data-done])'); if (!cs.length) return;
+  if (!('IntersectionObserver' in window)) { cs.forEach(c => { c.dataset.done = 1; ANIM.thumb(c, c.dataset.ex); }); return; }
+  if (!thumbObs) thumbObs = new IntersectionObserver(es => es.forEach(en => { if (!en.isIntersecting) return; const c = en.target; thumbObs.unobserve(c); if (!c.dataset.done) { c.dataset.done = 1; ANIM.thumb(c, c.dataset.ex); } }), { rootMargin: '200px 0px' });
+  thumbObs.disconnect(); document.querySelectorAll('canvas.ex-thumb:not([data-done])').forEach(c => thumbObs.observe(c));
+}
+let animStop = null, animPaused = false;
+function stopAnim() { if (animStop) { animStop(); animStop = null; } }
+function startAnim() {
+  stopAnim(); const c = $('#exAnim'); if (!c || typeof ANIM === 'undefined') return;
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (animPaused || reduce) { ANIM.thumb(c, c.dataset.ex); animPaused = true; } else animStop = ANIM.play(c, c.dataset.ex);
+  const b = $('#animBtn'); if (b) { b.innerHTML = animPaused ? IC.resume : IC.pause; b.setAttribute('aria-label', animPaused ? 'Запустить анимацию' : 'Пауза'); }
+}
+function kbCount() { const n = filterEx(EXERCISES, ui.kbQ, ui.kbG, ui.kbE).length; return `${n} ${plural(n, 'упражнение', 'упражнения', 'упражнений')} · нажмите, чтобы увидеть технику`; }
 function kbList() {
-  const list = filterEx(EXERCISES, ui.kbQ, ui.kbG);
+  const list = filterEx(EXERCISES, ui.kbQ, ui.kbG, ui.kbE);
   if (!list.length) return `<p class="hint">Ничего не нашлось.</p>`;
-  return list.map(e => `<button class="kb-row" data-a="exInfo" data-id="${e.id}"><span class="grow"><span>${esc(e.n)}</span><small>${esc(e.m)}</small></span><span class="chev">${IC.chev}</span></button>`).join('');
+  return list.map(e => `<button class="kb-row" data-a="exInfo" data-id="${e.id}">${thumbHtml(e.id)}<span class="grow"><span>${esc(e.n)}</span><small>${esc(e.m)}</small></span><span class="chev">${IC.chev}</span></button>`).join('');
 }
 function renderKb() {
   let h = `<header class="hd"><h1>База знаний</h1></header>${segm('kbTab', ui.kbTab, [['ex', 'Упражнения'], ['art', 'Статьи']], 'Раздел')}`;
   if (ui.kbTab === 'ex') {
     h += `<input class="input" type="search" data-in="kbQ" placeholder="Поиск: ягодицы, гантели, спина…" value="${esc(ui.kbQ)}" aria-label="Поиск упражнения">
       <div class="chips scroll">${[['', 'Все']].concat(EX_GROUPS).map(([g, l]) => `<button class="chip" data-a="kbG" data-g="${g}" aria-pressed="${ui.kbG === g}">${esc(l)}</button>`).join('')}</div>
+      ${eqChips('kbE', ui.kbE)}
+      <p class="hint" id="kbCount">${kbCount()}</p>
       <section class="card" style="padding-block:4px"><div id="kbList">${kbList()}</div></section>`;
   } else {
     h += `<section class="card" style="padding-block:4px">${ARTICLES.map(a => `<button class="kb-row" data-a="openArt" data-id="${a.id}"><span class="grow"><span>${esc(a.t)}</span><small>${esc(a.s)}</small></span><span class="chev">${IC.chev}</span></button>`).join('')}</section>`;
@@ -613,7 +641,9 @@ function sheetEx() {
   const q = encodeURIComponent(e.n + ' техника выполнения');
   const addPart = ui.exFrom === 'session' || e.custom ? '' : `<div class="field"><span class="lbl">Добавить в программу</span><div class="chips">${S.program.days.map((d, di) => `<button class="chip" data-a="exToDay" data-d="${di}">${esc(d.name)}</button>`).join('')}</div></div>`;
   if (e.custom) return `${sheetHead(e.n)}<p class="muted">Своё упражнение · ${esc(GROUP[e.g] || '')}</p>`;
-  return `${sheetHead(e.n)}
+  const anim = hasAnim(e.id) ? `<div class="ex-anim-box"><canvas class="ex-anim" id="exAnim" data-ex="${esc(e.id)}" role="img" aria-label="Анимация: как выполнять «${esc(e.n)}»"></canvas>
+      <button class="anim-btn" id="animBtn" data-a="animToggle" aria-label="Пауза">${IC.pause}</button></div>` : '';
+  return `${sheetHead(e.n)}${anim}
     <div class="row"><span class="tag">${esc(GROUP[e.g])}</span><span class="tag">${esc(e.eq)}</span><span class="tag">${esc(e.lvl)}</span></div>
     <div class="doc">
       <p><b>Мышцы:</b> ${esc(e.m)}</p>
@@ -1388,6 +1418,7 @@ function render() {
     nav.hidden = false;
     v.innerHTML = ui.tab === 'today' ? renderToday() : ui.tab === 'train' ? renderTrain() : ui.tab === 'progress' ? renderProgress() : ui.tab === 'kb' ? renderKb() : renderProfile();
     $('#tabs').innerHTML = tabsHtml();
+    if (ui.tab === 'kb') drawThumbs(v);
   }
   const want = !!S.session;
   if (want !== keepOn) { keepOn = want; nb('keepScreenOn', want); }
@@ -1396,10 +1427,13 @@ const SHEETS = { add: sheetAdd, edit: sheetEdit, steps: sheetSteps, weight: shee
 function openSheet(kind) { ui.sheet = kind; renderSheet(); const sh = $('#sheet'); sh.scrollTop = 0; if (kind === 'add') setTimeout(() => { const ta = $('#foodText'); if (ta) ta.focus(); }, 60); }
 function renderSheet() {
   const back = $('#sheetBack'), sh = $('#sheet');
+  stopAnim();
   if (!ui.sheet) { back.hidden = true; sh.innerHTML = ''; document.body.style.overflow = ''; return; }
   back.hidden = false; document.body.style.overflow = 'hidden';
   sh.innerHTML = (SHEETS[ui.sheet] || (() => ''))();
   if (ui.sheet === 'add') { renderPreview(); renderSearch(); }
+  if (ui.sheet === 'ex') { animPaused = false; startAnim(); }
+  if (ui.sheet === 'pick') drawThumbs(sh);
 }
 function closeSheet() { const was = ui.sheet; ui.sheet = null; ui.confirm = ui.confirm === 'progImport' ? null : ui.confirm; ui.tplId = null; ui.pickNew = false; renderSheet(); if (pendingRender || was === 'pick' || was === 'ex' || was === 'workout' || was === 'templates' || was === 'import') render(); }
 
@@ -1538,8 +1572,9 @@ const A = {
       (p.customEx || []).forEach(c => { if (c && c.id && !S.customEx.some(x => x.id === c.id)) S.customEx.push(c); }); });
     ui.pendingImport = null; ui.confirm = null; ui.sheet = null; renderSheet(); render(); toast('Программа загружена');
   },
-  pickOpen(b) { ui.pickFor = { mode: b.dataset.mode, di: +b.dataset.d }; ui.pickQ = ''; ui.pickG = ''; ui.pickNew = false; openSheet('pick'); },
+  pickOpen(b) { ui.pickFor = { mode: b.dataset.mode, di: +b.dataset.d }; ui.pickQ = ''; ui.pickG = ''; ui.pickE = ''; ui.pickNew = false; openSheet('pick'); },
   pickG(b) { ui.pickG = b.dataset.g; renderSheet(); },
+  pickE(b) { ui.pickE = b.dataset.t; renderSheet(); },
   pickEx(b) { const e = exInfo(b.dataset.id); if (e) addExercise(e); },
   cxNew() { ui.pickNew = true; renderSheet(); setTimeout(() => { const n = $('#cxName'); if (n) n.focus(); }, 30); },
   cxCancel() { ui.pickNew = false; renderSheet(); },
@@ -1549,10 +1584,12 @@ const A = {
     mutate(() => { S.customEx.push(e); }); ui.pickNew = false; addExercise(e);
   },
   exInfo(b) { if (!b.dataset.id) { toast('Это своё упражнение — описания нет'); return; } ui.exId = b.dataset.id; ui.exFrom = b.dataset.from || null; openSheet('ex'); },
+  animToggle() { animPaused = !animPaused; startAnim(); },
   exToDay(b) { const e = exInfo(ui.exId), di = +b.dataset.d; if (!e) return; mutate(() => { S.program.days[di].ex.push(newProgEx(e)); }); toast(`Добавлено в «${S.program.days[di].name}»`); },
   /* база знаний */
   kbTab(b) { ui.kbTab = b.dataset.v; render(); },
   kbG(b) { ui.kbG = b.dataset.g; render(); },
+  kbE(b) { ui.kbE = b.dataset.t; render(); },
   openArt(b) { ui.artId = b.dataset.id; openSheet('art'); },
   /* прогресс */
   per(b) { ui.per = +b.dataset.v; render(); },
@@ -1690,8 +1727,8 @@ const IN = {
   dayName(el) { mutate(() => { S.program.days[+el.dataset.d].name = el.value; }); },
   exSets(el) { mutate(() => { S.program.days[+el.dataset.d].ex[+el.dataset.e].sets = el.value.replace(/\D/g, ''); }); },
   exReps(el) { mutate(() => { S.program.days[+el.dataset.d].ex[+el.dataset.e].reps = el.value; }); },
-  pickQ(el) { ui.pickQ = el.value; $('#pickList').innerHTML = pickListHtml(filterEx(EXERCISES.concat(S.customEx || []), ui.pickQ, ui.pickG)); },
-  kbQ(el) { ui.kbQ = el.value; const l = $('#kbList'); if (l) l.innerHTML = kbList(); },
+  pickQ(el) { ui.pickQ = el.value; const l = $('#pickList'); l.innerHTML = pickListHtml(filterEx(EXERCISES.concat(S.customEx || []), ui.pickQ, ui.pickG, ui.pickE)); drawThumbs(l); },
+  kbQ(el) { ui.kbQ = el.value; const l = $('#kbList'); if (l) { l.innerHTML = kbList(); drawThumbs(l); } const c = $('#kbCount'); if (c) c.textContent = kbCount(); },
   pf(el) {
     const f = el.dataset.f, v = el.value, wasDemo = S.demo; mutate(() => { S.profile[f] = v; });
     if (wasDemo) { render(); const n = document.querySelector(`[data-f="${f}"]`); if (n) { n.focus(); try { n.setSelectionRange(n.value.length, n.value.length); } catch (e) { /* поле без курсора */ } } }
