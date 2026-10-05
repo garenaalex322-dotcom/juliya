@@ -40,13 +40,18 @@ const IC = {
   left: sv('<path d="M14.5 6l-6 6 6 6"/>', 20), right: sv('<path d="M9.5 6l6 6-6 6"/>', 20),
   x: sv('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>', 18), plus: sv('<path d="M12 5.5v13M5.5 12h13"/>', 18),
   up: sv('<path d="M6.5 14.5L12 9l5.5 5.5"/>', 18), down: sv('<path d="M6.5 9.5L12 15l5.5-5.5"/>', 18),
-  check: sv('<path d="M5.5 12.5l4.2 4.2 8.8-9.4"/>', 20),
-  camera: sv('<path d="M4 8.5h3l1.6-2.5h6.8L17 8.5h3v10.5H4z"/><circle cx="12" cy="13.5" r="3.4"/>', 18),
-  spark: sv('<path d="M12 3.5l1.9 5.6 5.6 1.9-5.6 1.9L12 18.5l-1.9-5.6L4.5 11l5.6-1.9z"/>', 18), chev: sv('<path d="M9.5 6l6 6-6 6"/>', 18),
+  check: sv('<path d="M5.5 12.5l4.2 4.2 8.8-9.4"/>', 20), minus: sv('<path d="M5.5 12h13"/>', 18),
+  barcode: sv('<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M8 8.5v7M11 8.5v7M13.5 8.5v7M16 8.5v7"/>', 18),
+  edit: sv('<path d="M5 19l1-4.2L15.6 5.2a1.9 1.9 0 0 1 2.7 0l.5.5a1.9 1.9 0 0 1 0 2.7L9.2 18 5 19z"/><path d="M13.8 7l3.2 3.2"/>', 16), chev: sv('<path d="M9.5 6l6 6-6 6"/>', 18),
   pause: sv('<path d="M9 6v12M15 6v12"/>', 18), resume: sv('<path d="M8 5.5l11 6.5-11 6.5z"/>', 18),
   play: sv('<path d="M10 4.5h5.5M12.75 4.5v2.2"/><circle cx="12.75" cy="13.5" r="6.8"/><path d="M12.75 10v3.5l2.3 1.6"/>', 18)
 };
-const glassSvg = on => `<svg viewBox="0 0 30 38" width="26" height="34" aria-hidden="true"><path d="M4 3h22l-2.6 30.2a2.5 2.5 0 0 1-2.5 2.3H9.1a2.5 2.5 0 0 1-2.5-2.3z" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+function glassSvg(fr) {
+  // fr — доля наполнения стакана от 0 до 1
+  let lvl = '';
+  if (fr > 0 && fr < 1) { const y = 35.5 - Math.max(0.12, fr) * 32.5, xl = 4 + (y - 3) * 0.086, xr = 26 - (y - 3) * 0.086; lvl = `<path d="M${xl.toFixed(2)} ${y.toFixed(2)}H${xr.toFixed(2)}L23.4 33.2a2.5 2.5 0 0 1-2.5 2.3H9.1a2.5 2.5 0 0 1-2.5-2.3z" fill="currentColor" fill-opacity=".55"/>`; }
+  return `<svg viewBox="0 0 30 38" width="26" height="34" aria-hidden="true">${lvl}<path d="M4 3h22l-2.6 30.2a2.5 2.5 0 0 1-2.5 2.3H9.1a2.5 2.5 0 0 1-2.5-2.3z" fill="${fr >= 1 ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+}
 
 /* ================= Мост к Android ================= */
 const NB = window.AndroidBridge || null;
@@ -60,7 +65,7 @@ const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return 
 const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); return true; } catch (e) { return false; } };
 const lsJson = k => { try { return JSON.parse(lsGet(k) || 'null'); } catch (e) { return null; } };
 let MODE = lsGet('tarelka-mode') === 'coach' ? 'coach' : 'client';
-const CO = { user: null, authChecked: false, ready: false, clients: [], cur: null, ai: { prov: 'yandex', key: '', folder: '', model: '' }, unsub: null, err: '', info: '', aiMsg: '', aiOk: null, aiProv: null, busy: false, confirm: null, autoOpened: false };
+const CO = { user: null, authChecked: false, ready: false, clients: [], cur: null, unsub: null, err: '', info: '', busy: false, confirm: null, autoOpened: false };
 function storeKey() { return MODE === 'coach' && CO.cur ? KEY + '-c-' + CO.cur : KEY; }
 function loadState() { if (MODE === 'coach' && !CO.cur) return null; return lsJson(storeKey()); }
 function save(full) { if (S.demo) return; if (Sync.cid) Sync.touch(full); storageOk = lsSet(storeKey(), JSON.stringify(S)); }
@@ -114,6 +119,7 @@ function migrate(s) {
   if (!s || typeof s !== 'object') return null;
   if (s.demo) return null;
   const out = Object.assign(blankState(), s);
+  delete out.ai; // ключ распознавания еды из старых версий больше не нужен
   out.profile = Object.assign(blankProfile(), s.profile || {});
   if (!s.v || s.v < 2) {
     if (s.program && Array.isArray(s.program.days)) {
@@ -208,6 +214,8 @@ function targets() {
   return autoTargets(p);
 }
 function waterTarget() { const v = toNum(S.profile.water); if (v > 0) return v; const w = toNum(S.profile.weight); if (w > 0) return Math.min(3000, Math.max(1500, Math.round(w * 30 / 250) * 250)); return 2000; }
+const GLASSES = [150, 200, 250, 300, 330, 400, 500];
+const glassMl = () => { const v = toNum(S.profile.glass); return v >= 50 && v <= 1000 ? Math.round(v) : 250; };
 const stepGoal = () => toNum(S.profile.stepGoal) > 0 ? toNum(S.profile.stepGoal) : 8000;
 const restSec = () => toNum(S.profile.rest) > 0 ? toNum(S.profile.rest) : 90;
 function weightOn(k) { let w = null; for (const x of S.weights) { if (x.date <= k) w = x.kg; else break; } return w || toNum(S.profile.weight) || null; }
@@ -325,9 +333,9 @@ function activityCard() {
 }
 function renderToday() {
   const k = ui.date, t = todayKey(), day = getDay(k), tot = dayTotals(day), tg = targets(), d = pk(k);
-  const wt = waterTarget(), water = day.water || 0, filled = Math.floor(water / 250);
-  const n = Math.min(16, Math.max(Math.ceil(wt / 250), filled + 1));
-  let glasses = ''; for (let i = 0; i < n; i++) glasses += `<button class="glass${i < filled ? ' on' : ''}" data-a="water" data-i="${i}" aria-label="${(i + 1) * 250} мл">${glassSvg(i < filled)}</button>`;
+  const wt = waterTarget(), water = day.water || 0, gl = glassMl(), filled = Math.floor(water / gl), part = (water - filled * gl) / gl;
+  const n = Math.min(16, Math.max(Math.ceil(wt / gl), filled + 1));
+  let glasses = ''; for (let i = 0; i < n; i++) { const fr = i < filled ? 1 : i === filled ? part : 0; glasses += `<button class="glass${fr >= 1 ? ' on' : fr > 0 ? ' part' : ''}" data-a="water" data-i="${i}" aria-label="${(i + 1) * gl} мл">${glassSvg(fr)}</button>`; }
   const meals = MEALS.map(m => {
     const its = day.items.filter(x => x.meal === m), mk = its.reduce((s, x) => s + itemVals(x).kcal, 0);
     return `<section class="meal"><div class="meal-hd"><h3>${m}</h3>${its.length ? `<span class="meal-kcal">${f0(mk)} ккал</span>` : ''}<button class="add-mini" data-a="openAdd" data-meal="${m}" aria-label="Добавить: ${m.toLowerCase()}">${IC.plus}</button></div>
@@ -342,7 +350,9 @@ function renderToday() {
     ${macroRow('Белки', tot.p, tg && tg.p, 'prot')}${macroRow('Жиры', tot.f, tg && tg.f, 'fat')}${macroRow('Углеводы', tot.c, tg && tg.c, 'carb')}
   </div></div><p class="eaten-line">Съедено <b class="num">${f0(tot.kcal)}</b>${tg ? ` из <span class="num">${f0(tg.kcal)}</span>` : ''} ккал</p></section>
   ${activityCard()}
-  <section class="card"><div class="sec-head"><h2>Вода</h2><span class="muted num">${f1(water / 1000)} из ${f1(wt / 1000)} л</span></div><div class="glasses">${glasses}</div></section>
+  <section class="card"><div class="sec-head"><h2>Вода</h2><span class="muted num">${f1(water / 1000)} из ${f1(wt / 1000)} л</span></div><div class="glasses">${glasses}</div>
+    <div class="water-ctl"><button class="chip glass-chip" data-a="openWater" data-f="glass" aria-label="Размер стакана: ${gl} мл. Изменить">Стакан ${gl} мл</button><span class="grow"></span>
+      <button class="icon-btn" data-a="waterUndo" aria-label="Убрать последнее добавление воды" ${water > 0 ? '' : 'disabled'}>${IC.minus}</button><button class="btn btn-ghost btn-sm" data-a="openWater" data-f="add">+ ещё</button></div></section>
   <button class="btn btn-primary btn-block add-main" data-a="openAdd">${IC.plus} Добавить еду</button>
   ${meals}`;
 }
@@ -350,14 +360,13 @@ function updateActivityCard() { const el = $('#actCard'); if (el && ui.tab === '
 
 /* ---------- Добавление еды ---------- */
 function previewData() {
-  const skip = ui.aiText && ui.aiText === ui.text;
-  const parsed = skip ? { items: [], unknown: [] } : parseText(ui.text), items = [], cnt = {};
+  const parsed = parseText(ui.text), items = [], cnt = {};
   parsed.items.forEach(it => {
     const base = 't|' + it.src + '|' + it.food.id; cnt[base] = (cnt[base] || 0) + 1; const key = base + '|' + cnt[base];
     if (ui.hidden.has(key)) return; const g = ui.over[key];
     items.push({ key, food: it.food, grams: g != null ? g : it.grams, def: it.def && g == null });
   });
-  ui.extra.forEach(x => items.push({ key: x.key, food: x.food, grams: ui.over[x.key] != null ? ui.over[x.key] : x.grams, ai: x.ai }));
+  ui.extra.forEach(x => items.push({ key: x.key, food: x.food, grams: ui.over[x.key] != null ? ui.over[x.key] : x.grams }));
   ui.manual.forEach(m => items.push({ key: m.key, manual: m }));
   return { items, unknown: parsed.unknown.filter(u => !ui.hidden.has('u|' + u)) };
 }
@@ -366,11 +375,10 @@ function renderPreview() {
   const box = $('#pv'); if (!box) return;
   const { items, unknown } = previewData(); ui.pv = items; ui.unk = unknown;
   let h = '';
-  if (ui.aiBusy || ui.aiPhoto || ui.aiNote) h += `<div class="ai-box">${ui.aiPhoto ? `<img class="ai-thumb" src="${ui.aiPhoto}" alt="Фото еды">` : ''}<p class="small">${ui.aiBusy ? 'Распознаю… обычно 5–20 секунд.' : esc(ui.aiNote || 'Готово. Проверьте граммы — ИИ оценивает примерно.')}</p></div>`;
   if (items.length) h += '<div class="pv">' + items.map((x, i) => {
     if (x.manual) return `<div class="pv-item"><div class="pv-name">${esc(x.manual.name)}<small>введено вручную</small></div><span></span><span class="pv-kcal">${f0(x.manual.kcal)} ккал</span><button class="x-btn" data-a="pvRemove" data-i="${i}" aria-label="Убрать">${IC.x}</button></div>`;
     const w = x.food.water;
-    return `<div class="pv-item"><div class="pv-name">${esc(x.food.name)}${w ? '<small>пойдёт в счётчик воды</small>' : x.ai ? '<small>оценка ИИ, поправьте граммы при необходимости</small>' : x.def ? '<small>обычная порция, поправьте при желании</small>' : ''}</div>
+    return `<div class="pv-item"><div class="pv-name">${esc(x.food.name)}${w ? '<small>пойдёт в счётчик воды</small>' : x.def ? '<small>обычная порция, поправьте при желании</small>' : ''}</div>
       <label class="pv-g"><input class="input input-sm num" type="text" inputmode="decimal" value="${esc(x.grams)}" data-in="pvGrams" data-i="${i}" aria-label="${w ? 'Миллилитры' : 'Граммы'}: ${esc(x.food.name)}">${w || x.food.liq ? 'мл' : 'г'}</label>
       <span class="pv-kcal" id="pvk${i}">${w ? '' : f0(pvKcal(x)) + ' ккал'}</span>
       <button class="x-btn" data-a="pvRemove" data-i="${i}" aria-label="Убрать">${IC.x}</button></div>`;
@@ -401,20 +409,24 @@ function renderSearch() {
   box.innerHTML = res.length ? `<div class="results">${res.map(f => `<button class="res" data-a="pickFood" data-id="${f.id}"><span>${esc(f.name)}</span><span>${f0(f.kcal)} ккал / 100 ${f.liq ? 'мл' : 'г'}</span></button>`).join('')}</div>`
     : (ui.q.trim().length >= 2 ? `<p class="hint">Ничего не нашлось. Добавьте свой продукт в «Профиле» или введите калории вручную.</p>` : '');
 }
-function sheetHead(title) { return `<div class="grabber"></div><div class="sheet-hd"><h2 id="sheetTitle">${esc(title)}</h2><button class="icon-btn" data-a="closeSheet" aria-label="Закрыть">${IC.x}</button></div>`; }
+function sheetHead(title, act) { return `<div class="grabber"></div><div class="sheet-hd"><h2 id="sheetTitle">${esc(title)}</h2><button class="icon-btn" data-a="${act || 'closeSheet'}" aria-label="Закрыть">${IC.x}</button></div>`; }
 function sheetAdd() {
   const rec = S.recent.map((r, i) => foodById(r.id) ? `<button class="chip" data-a="pickRecent" data-i="${i}">${esc(r.name)} · ${f0(r.grams)}</button>` : '').join('');
-  const ai = aiCfg();
-  const aiRow = ai ? `<div class="row"><button class="btn btn-ghost btn-sm grow" data-a="aiPhoto" ${ui.aiBusy ? 'disabled' : ''}>${IC.camera} Фото еды</button><button class="btn btn-ghost btn-sm grow" data-a="aiText" ${ui.aiBusy ? 'disabled' : ''}>${IC.spark} Посчитать с ИИ</button></div><input type="file" id="photoIn" accept="image/*" hidden data-ch="photo">`
-    : `<p class="hint">${MODE === 'coach' ? 'Чтобы распознавать фото, добавьте ключ ИИ на экране «Мои подопечные».' : S.link ? 'Распознавание по фото появится, когда тренер подключит ИИ.' : 'Распознавание по фото работает после подключения к тренеру.'}</p>`;
+  const canScan = !!(NB && typeof NB.scanBarcode === 'function'), ds = dishList();
+  const bcRow = `<div class="row">${canScan ? `<button class="btn btn-ghost btn-sm grow" data-a="bcScan">${IC.barcode} Сканировать штрихкод</button><button class="btn btn-ghost btn-sm" data-a="bcOpen">Ввести код</button>`
+    : `<button class="btn btn-ghost btn-sm grow" data-a="bcOpen">${IC.barcode} Штрихкод с упаковки</button>`}</div>`;
+  const dishHtml = `<div class="field"><div class="lbl-row"><span class="lbl">Мои блюда</span><button class="btn-link" data-a="dishNew">+ Создать блюдо</button></div>
+    ${ds.length ? `<div class="chips">${ds.map(c => `<span class="dish-chip"><button data-a="dishAdd" data-id="${esc(c.id)}">${esc(c.name)} · ${f0(c.portion || 300)} г</button><button class="dish-ed" data-a="dishEdit" data-id="${esc(c.id)}" aria-label="Изменить блюдо: ${esc(c.name)}">${IC.edit}</button></span>`).join('')}</div>`
+      : `<p class="hint">Домашнее блюдо можно один раз собрать из продуктов — потом оно добавляется в одно касание.</p>`}</div>`;
   return `${sheetHead('Добавить еду')}
   ${segm('pickMeal', ui.meal, MEALS.map(m => [m, m]), 'Приём пищи')}
   <div class="field"><label for="foodText">Что вы съели или выпили?</label>
     <textarea id="foodText" class="input" rows="2" data-in="foodText" placeholder="Например: гречка 150 г, котлета, огурец" autocomplete="off">${esc(ui.text)}</textarea>
-    <p class="hint">Через запятую. Понимаю граммы, штуки, ложки, стаканы и тарелки: «2 яйца», «стакан кефира 1%», «чай с сахаром».${ai ? ' Сложное блюдо — напишите своими словами и нажмите «Посчитать с ИИ».' : ''}</p></div>
-  ${aiRow}
+    <p class="hint">Через запятую. Понимаю граммы, штуки, ложки, стаканы и тарелки: «2 яйца», «стакан кефира 1%», «чай с сахаром».</p></div>
+  ${bcRow}
   <div id="pv"></div>
   ${rec ? `<div class="field"><span class="lbl">Недавнее</span><div class="chips">${rec}</div></div>` : ''}
+  ${dishHtml}
   <div class="field"><label for="foodSearch">Найти в базе</label><input id="foodSearch" class="input" type="search" data-in="foodSearch" placeholder="Название продукта" autocomplete="off" value="${esc(ui.q)}"><div id="sr"></div></div>
   <button class="btn btn-primary btn-block" id="commitBtn" data-a="commitAdd" disabled>Добавить</button>`;
 }
@@ -432,11 +444,11 @@ function sheetEdit() {
   <div class="row"><button class="btn btn-primary grow" data-a="saveEdit">Сохранить</button><button class="btn btn-warn" data-a="deleteItem">Удалить</button></div>`;
 }
 function resetAdd(meal) {
-  ui.text = ''; ui.q = ''; ui.over = {}; ui.hidden = new Set(); ui.extra = []; ui.manual = []; ui.manualFor = null; ui.pv = []; ui.aiText = ''; ui.aiNote = ''; ui.aiPhoto = ''; ui.aiBusy = false;
+  ui.text = ''; ui.q = ''; ui.over = {}; ui.hidden = new Set(); ui.extra = []; ui.manual = []; ui.manualFor = null; ui.pv = [];
   if (meal) ui.meal = meal;
   else if (ui.date === todayKey()) { const h = new Date().getHours(); ui.meal = h < 11 ? 'Завтрак' : h < 15 ? 'Обед' : h < 18 ? 'Перекус' : h < 22 ? 'Ужин' : 'Перекус'; }
 }
-function pushRecent(food, grams) { if (food.ai) return; S.recent = [{ id: food.id, name: food.name, grams: Math.round(grams) }].concat(S.recent.filter(r => r.id !== food.id)).slice(0, 10); }
+function pushRecent(food, grams) { S.recent = [{ id: food.id, name: food.name, grams: Math.round(grams) }].concat(S.recent.filter(r => r.id !== food.id)).slice(0, 10); }
 
 function sheetSteps() {
   const st = stepsFor(ui.date);
@@ -445,6 +457,19 @@ function sheetSteps() {
   <p class="hint">Пригодится, если шаги считает браслет или часы. Введённое число заменит подсчёт телефона за этот день.</p>
   <div class="row"><button class="btn btn-primary grow" data-a="saveSteps">Сохранить</button>${st.src === 'manual' && NB ? `<button class="btn btn-ghost" data-a="clearSteps">Считать телефоном</button>` : ''}</div>`;
 }
+function sheetWater() {
+  const gl = glassMl(), water = getDay(ui.date).water || 0, own = !!ui.glassOwn || !GLASSES.includes(gl);
+  return `${sheetHead('Вода · ' + relD(ui.date).toLowerCase())}
+  <p class="muted num">Выпито ${f0(water)} мл из ${f0(waterTarget())} мл</p>
+  <div class="field"><label for="wAdd">Добавить, мл</label><div class="row"><input id="wAdd" class="input num grow" inputmode="numeric" enterkeyhint="done" placeholder="например, 120" autocomplete="off"><button class="btn btn-primary" data-a="waterAdd">Добавить</button></div>
+    <div class="chips">${[100, 200, 330, 500].map(v => `<button class="chip" data-a="waterAdd" data-v="${v}">+${v} мл</button>`).join('')}</div></div>
+  <div class="field"><span class="lbl">Размер стакана</span>
+    <div class="chips">${GLASSES.map(v => `<button class="chip" data-a="glassSet" data-v="${v}" aria-pressed="${!own && gl === v}">${v} мл</button>`).join('')}<button class="chip" data-a="glassOwn" aria-pressed="${own}">своё</button></div>
+    ${own ? `<div class="row"><input id="glassIn" class="input num grow" inputmode="numeric" enterkeyhint="done" value="${GLASSES.includes(gl) ? '' : gl}" placeholder="от 50 до 1000 мл" aria-label="Свой объём стакана, мл" autocomplete="off"><button class="btn btn-ghost" data-a="glassSave">Сохранить</button></div>` : ''}
+    <p class="hint">Стаканы на главном экране — такого объёма. Обычный стакан — 250 мл, кружка — около 300, бутылка — 500.</p></div>`;
+}
+const waterHist = k => { ui.wHist = ui.wHist || {}; return ui.wHist[k] || (ui.wHist[k] = []); };
+const nn = v => Math.max(0, r1(toNum(v) || 0));
 
 /* ================= ТРЕНИРОВКИ ================= */
 function lastFor(exId, name, beforeId) {
@@ -920,8 +945,12 @@ function renderProfile() {
     <button class="btn btn-primary" data-a="makeReport">Сформировать отчёт</button>
     ${ui.report ? `<textarea id="reportTa" class="input" rows="10" readonly>${esc(ui.report)}</textarea><div class="row">${NB ? `<button class="btn btn-primary grow" data-a="shareReport">Отправить</button>` : ''}<button class="btn btn-ghost grow" data-a="copyReport">Скопировать</button></div>` : ''}
   </section>
-  <section class="card"><h2>Мои продукты</h2><p class="small muted">Если чего-то нет в базе, добавьте с упаковки. Потом этот продукт можно вписывать текстом, как обычный.</p>
-    ${S.custom.length ? `<div>${S.custom.map(c => `<div class="list-row"><span>${esc(c.name)}<br><span class="small muted num">${f0(c.kcal)} ккал · Б ${f1(c.p)} · Ж ${f1(c.f)} · У ${f1(c.c)} на 100 г${c.piece ? ` · 1 шт ${f0(c.piece)} г` : ''}</span></span><button class="x-btn" data-a="delCustom" data-id="${c.id}" aria-label="Удалить продукт">${IC.x}</button></div>`).join('')}</div>` : ''}
+  <section class="card"><div class="sec-head"><h2>Мои блюда</h2><button class="btn btn-ghost btn-sm" data-a="dishNew">${IC.plus} Создать</button></div>
+    <p class="small muted">Домашнее блюдо собирается из продуктов один раз — потом его можно добавить одним касанием или вписать текстом, как обычный продукт.</p>
+    ${dishList().length ? `<div>${dishList().map(c => `<div class="list-row"><span>${esc(c.name)}<br><span class="small muted num">${f0(c.kcal)} ккал на 100 г · порция ${f0(c.portion)} г · ${c.recipe.items.length} ${plural(c.recipe.items.length, 'продукт', 'продукта', 'продуктов')}</span></span><span class="row nowrap"><button class="x-btn" data-a="dishEdit" data-id="${esc(c.id)}" aria-label="Изменить блюдо">${IC.edit}</button><button class="x-btn" data-a="delCustom" data-id="${esc(c.id)}" aria-label="Удалить блюдо">${IC.x}</button></span></div>`).join('')}</div>` : ''}
+  </section>
+  <section class="card"><h2>Мои продукты</h2><p class="small muted">Если чего-то нет в базе, добавьте с упаковки или по штрихкоду в окне «Добавить еду». Потом этот продукт можно вписывать текстом, как обычный.</p>
+    ${S.custom.some(c => !c.recipe) ? `<div>${S.custom.filter(c => !c.recipe).map(c => `<div class="list-row"><span>${esc(c.name)}<br><span class="small muted num">${f0(c.kcal)} ккал · Б ${f1(c.p)} · Ж ${f1(c.f)} · У ${f1(c.c)} на 100 г${c.piece ? ` · 1 шт ${f0(c.piece)} г` : ''}${c.barcode ? ` · штрихкод ${esc(c.barcode)}` : ''}</span></span><button class="x-btn" data-a="delCustom" data-id="${esc(c.id)}" aria-label="Удалить продукт">${IC.x}</button></div>`).join('')}</div>` : ''}
     <div class="grid2"><div class="field span2"><label for="cName">Название</label><input id="cName" class="input" placeholder="Например: батончик Bombbar"></div>
       <div class="field"><label for="cKcal">Ккал на 100 г</label><input id="cKcal" class="input num" inputmode="decimal"></div>
       <div class="field"><label for="cPiece">Вес 1 шт, г</label><input id="cPiece" class="input num" inputmode="decimal" placeholder="если штучный"></div>
@@ -1109,8 +1138,6 @@ const Sync = {
     const doc = snap.data() || {}, data = doc.d || {}, us = doc.u || {};
     let ch = false;
     if (this.role === 'client') {
-      const ai = normAi(doc.ai);
-      if (cj(ai) !== cj(S.ai || null)) { S.ai = ai; ch = true; }
       const me = FB.auth && FB.auth.currentUser;
       if (doc.ownerUid && me && doc.ownerUid !== me.uid) { this.status = 'lost'; this.err = 'Тренер выдал новый код — введите его в «Профиле».'; }
       if (S.link && doc.name && S.link.name !== doc.name) { S.link.name = doc.name; ch = true; }
@@ -1176,17 +1203,6 @@ const Sync = {
 };
 
 /* ---------- Тренер ---------- */
-const YA_MODEL = 'qwen3.6-35b-a3b', YA_URL = 'https://llm.api.cloud.yandex.net/v1/chat/completions';
-const DEFAULT_MODEL = YA_MODEL;
-const OR_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OR_MODELS = [['qwen/qwen3-vl-235b-a22b-instruct', 'Qwen3 VL 235B'], ['qwen/qwen3-vl-30b-a3b-instruct', 'Qwen3 VL 30B — дешевле'], ['google/gemini-2.5-flash', 'Gemini 2.5 Flash']];
-const AI_PROVS = [['yandex', 'Яндекс AI Studio'], ['openrouter', 'OpenRouter']];
-function normAi(x) {
-  if (!x || !x.key) return null;
-  const prov = x.prov || (/^sk-or-/.test(x.key) ? 'openrouter' : 'yandex'), slash = /\//.test(x.model || '');
-  return { prov, key: x.key, folder: x.folder || '', model: prov === 'openrouter' ? (slash ? x.model : OR_MODELS[0][0]) : (x.model && !slash ? x.model : YA_MODEL) };
-}
-const AI_EMPTY = () => ({ prov: 'yandex', key: '', folder: '', model: YA_MODEL });
 const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function genCode() { const a = new Uint32Array(6); crypto.getRandomValues(a); let s = ''; a.forEach(x => { s += CODE_ABC[x % CODE_ABC.length]; }); return s; }
 function ago(ts) {
@@ -1205,11 +1221,6 @@ const Coach = {
   },
   load() {
     const uid = CO.user.uid;
-    FB.db.collection('coaches').doc(uid).get().then(d => {
-      const ai = (d.exists && d.data().ai) || {};
-      CO.ai = normAi(ai) || AI_EMPTY();
-      if (!CO.cur) render();
-    }).catch(() => { });
     if (CO.unsub) CO.unsub();
     CO.unsub = FB.db.collection('clients').where('coachUid', '==', uid).onSnapshot(s => {
       CO.clients = s.docs.map(d => {
@@ -1231,8 +1242,7 @@ const Coach = {
   },
   async addClient(name) {
     const ref = FB.db.collection('clients').doc();
-    await ref.set({ coachUid: CO.user.uid, ownerUid: null, name, invite: '', createdAt: Date.now(), seen: 0, d: {}, u: {},
-      ai: CO.ai.key ? normAi(CO.ai) : null });
+    await ref.set({ coachUid: CO.user.uid, ownerUid: null, name, invite: '', createdAt: Date.now(), seen: 0, d: {}, u: {} });
     const code = await Coach.newInvite(ref.id);
     await ref.update({ invite: code });
     return code;
@@ -1249,12 +1259,6 @@ const Coach = {
     await FB.db.collection('clients').doc(cid).delete();
     if (c && c.invite) FB.db.collection('invites').doc(c.invite).delete().catch(() => { });
     lsSet(KEY + '-c-' + cid, null);
-  },
-  async saveAi(prov, key, folder, model) {
-    const ai = { prov, key, folder: folder || '', model: model || (prov === 'openrouter' ? OR_MODELS[0][0] : YA_MODEL) };
-    CO.ai = ai;
-    await FB.db.collection('coaches').doc(CO.user.uid).set({ ai }, { merge: true });
-    await Promise.all(CO.clients.map(c => FB.db.collection('clients').doc(c.id).update({ ai: key ? ai : null })));
   },
   open(cid) {
     Sync.stop(); CO.cur = cid; lsSet('tarelka-coach-cur', cid);
@@ -1295,29 +1299,11 @@ function renderCoach() {
     ${CO.confirm === 'del:' + c.id ? `<div class="confirm"><p>Удалить карточку «${esc(c.name)}»? У тренера пропадёт доступ к её дневнику, у неё на телефоне записи останутся.</p><div class="row"><button class="btn btn-warn btn-sm" data-a="coDelYes" data-id="${c.id}">Удалить</button><button class="btn-link" data-a="coNo">Отмена</button></div></div>`
       : CO.confirm === 'code:' + c.id ? `<div class="confirm"><p>Выдать новый код? Старый перестанет работать, а телефон подопечной отключится, пока она не введёт новый.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="coNewCodeYes" data-id="${c.id}">Выдать код</button><button class="btn-link" data-a="coNo">Отмена</button></div></div>`
       : `<div class="row"><button class="btn-link" data-a="coNewCode" data-id="${c.id}">Новый код</button><button class="btn-link warn-text" data-a="coDel" data-id="${c.id}">Удалить</button></div>`}</section>`).join('');
-  const prov = CO.aiProv || CO.ai.prov || 'yandex', same = !!CO.ai.key && CO.ai.prov === prov;
-  const orModel = same && /\//.test(CO.ai.model) ? CO.ai.model : OR_MODELS[0][0];
   return `<header class="hd"><h1>Мои подопечные</h1></header>
     ${CO.err ? `<div class="banner plain"><p>${esc(CO.err)}</p></div>` : ''}
     ${!CO.ready ? '<p class="muted">Загружаю список…</p>' : list || '<p class="muted">Пока никого нет. Добавьте первую подопечную.</p>'}
     <section class="card"><h2>Новая подопечная</h2><div class="row"><input id="coNewName" class="input grow" placeholder="Имя" autocomplete="off"><button class="btn btn-primary" data-a="coAdd" ${CO.busy ? 'disabled' : ''}>Добавить</button></div>
       <p class="hint">Появится код из 6 символов. Отправьте его подопечной.</p></section>
-    <section class="card"><h2>Распознавание еды (ИИ)</h2>
-      <div class="field"><label for="aiProv">Сервис</label><select id="aiProv" class="input" data-ch="aiProv">${AI_PROVS.map(([v, l]) => `<option value="${v}" ${prov === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
-      <p class="small muted">${same ? 'Ключ сохранён: …' + esc(CO.ai.key.slice(-4)) + (CO.ai.prov === 'openrouter' ? ' · ' + esc((OR_MODELS.find(m => m[0] === CO.ai.model) || [0, CO.ai.model])[1]) : ' · Qwen3.6') : CO.ai.key ? 'Сейчас подключён ' + esc((AI_PROVS.find(p => p[0] === CO.ai.prov) || [0, ''])[1]) + '. Сохраните ключ, чтобы переключиться.' : 'Ключ не добавлен — фото и свободный текст распознаваться не будут.'}</p>
-      ${prov === 'openrouter' ? `<p class="small warn-text">OpenRouter с 27 июня 2026 года не обслуживает аккаунты из России: оттуда запросы будут отклонены. Для работы в России выберите Яндекс AI Studio.</p>` : ''}
-      <div class="field"><label for="aiKey">${prov === 'openrouter' ? 'Ключ OpenRouter' : 'API-ключ Яндекса'}</label><input id="aiKey" class="input" type="password" autocomplete="off" placeholder="${same ? 'Оставьте пустым, чтобы не менять' : prov === 'openrouter' ? 'sk-or-v1-…' : 'AQVN…'}"></div>
-      ${prov === 'openrouter' ? `<div class="field"><label for="aiModel">Модель</label><select id="aiModel" class="input">${OR_MODELS.map(([v, l]) => `<option value="${v}" ${orModel === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>`
-      : `<div class="field"><label for="aiFolder">ID каталога</label><input id="aiFolder" class="input" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="b1g…" value="${esc(CO.ai.folder || '')}"></div>`}
-      <div class="row"><button class="btn btn-primary grow" data-a="coSaveAi" ${CO.busy ? 'disabled' : ''}>Сохранить</button>${CO.ai.key ? `<button class="btn btn-ghost" data-a="coTestAi">Проверить</button><button class="btn btn-warn" data-a="coDelAi">Удалить</button>` : ''}</div>
-      ${CO.aiMsg ? `<p class="small ${CO.aiOk === false ? 'warn-text' : ''}" role="status">${esc(CO.aiMsg)}</p>` : ''}
-      ${prov === 'openrouter' ? `<p class="hint">Ключ создаётся на openrouter.ai/keys. Поставьте на него месячный лимит.</p>` : `<details class="howto"><summary>Как получить ключ и ID каталога</summary><ol>
-        <li>Зайдите на aistudio.yandex.ru с Яндекс ID, создайте облако и привяжите платёжный аккаунт (карта РФ). Новым пользователям дают стартовый грант.</li>
-        <li>В консоли Яндекс Облака скопируйте ID каталога default — строка вида b1g…</li>
-        <li>В каталоге: «Сервисные аккаунты» → «Создать», роль <b>ai.languageModels.user</b>.</li>
-        <li>Откройте аккаунт → «Создать новый ключ» → «API-ключ», область действия <b>yc.ai.languageModels.execute</b>. Скопируйте секрет — он показывается один раз.</li>
-        <li>Вставьте ключ и ID каталога сюда и нажмите «Сохранить».</li></ol></details>`}
-      <p class="hint">Ключ хранится в вашей базе Firebase и передаётся в приложения подопечных.</p></section>
     <button class="btn btn-ghost" data-a="coLogout">Выйти из аккаунта тренера</button>
     <p class="small muted">Вы вошли как ${esc(CO.user.email || '')}</p>${back}`;
 }
@@ -1330,117 +1316,169 @@ function linkCard() {
   }
   return `<section class="card"><div class="sec-head"><h2>Тренер</h2><span class="pill ${Sync.status === 'ok' ? 'ok' : Sync.status === 'lost' ? 'warn' : ''}">${Sync.status === 'lost' ? 'нет связи' : 'подключено'}</span></div>
     <p class="small muted" id="syncLine">${esc(syncText())}</p>
-    ${S.ai ? '<p class="small muted">Распознавание еды по фото включено.</p>' : ''}
     ${Sync.status === 'lost' ? `<div class="row"><input id="linkCode" class="input grow code-in" placeholder="Новый код" autocomplete="off" maxlength="12"><button class="btn btn-primary" data-a="linkCode" ${ui.linkBusy ? 'disabled' : ''}>Подключиться</button></div>` : ''}
     ${ui.confirm === 'unlink' ? `<div class="confirm"><p>Отключиться от тренера? Записи на телефоне останутся, но тренер перестанет их видеть.</p><div class="row"><button class="btn btn-warn btn-sm" data-a="unlinkYes">Отключиться</button><button class="btn btn-ghost btn-sm" data-a="confirmNo">Отмена</button></div></div>` : `<button class="btn-link" data-a="unlink">Отключиться от тренера</button>`}</section>`;
 }
 
-/* ---------- ИИ: распознавание еды ---------- */
-function aiCfg() { return normAi(MODE === 'coach' ? CO.ai : S.ai); }
+/* ---------- Запросы в интернет ---------- */
 const httpCbs = {};
 window.__httpDone = (id, code, text) => { const cb = httpCbs[id]; if (cb) { delete httpCbs[id]; cb({ code, text }); } };
-function httpPost(url, headers, body) {
-  if (NB && typeof NB.httpPost === 'function') {
+function httpGet(url, headers, ms = 20000) {
+  if (NB && typeof NB.httpGet === 'function') {
     return new Promise(res => {
       const id = uid(); httpCbs[id] = res;
-      try { NB.httpPost(id, url, JSON.stringify(headers), body); } catch (e) { delete httpCbs[id]; res({ code: -1, text: String(e) }); }
-      setTimeout(() => { if (httpCbs[id]) { delete httpCbs[id]; res({ code: -1, text: 'timeout' }); } }, 100000);
+      try { NB.httpGet(id, url, JSON.stringify(headers || {})); } catch (e) { delete httpCbs[id]; res({ code: -1, text: String(e) }); }
+      setTimeout(() => { if (httpCbs[id]) { delete httpCbs[id]; res({ code: -1, text: 'timeout' }); } }, ms);
     });
   }
-  return fetch(url, { method: 'POST', headers, body }).then(async r => ({ code: r.status, text: await r.text() })).catch(e => ({ code: -1, text: String(e) }));
+  // в браузере: заголовок User-Agent задать нельзя, поэтому запрос без заголовков
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null, t = ctl ? setTimeout(() => ctl.abort(), ms) : 0;
+  return fetch(url, ctl ? { signal: ctl.signal } : undefined).then(async r => ({ code: r.status, text: await r.text() }))
+    .catch(e => ({ code: -1, text: String(e) })).finally(() => clearTimeout(t));
 }
-const AI_PROMPT = 'Ты помогаешь вести дневник питания. Определи все продукты, блюда и напитки, оцени массу каждой позиции в граммах (для напитков — в миллилитрах) и посчитай калории, белки, жиры и углеводы именно на эту массу. Ориентируйся на типичные рецепты и порции, принятые в России. Если блюдо состоит из явно отдельных частей (гарнир, мясо, соус, хлеб) — перечисли их отдельно. Названия — по-русски, коротко, с уточнением способа приготовления, если он виден. Если еды нет, верни пустой список.\nОтвет — только JSON без пояснений и без markdown: {"items":[{"name":"Гречка варёная","grams":150,"kcal":165,"p":6.3,"f":1.7,"c":32}],"comment":"одно короткое предложение: что учтено или в чём неуверенность"}';
-async function aiRecognize(text, image) {
-  const cfg = aiCfg(); if (!cfg) throw new Error('ИИ не подключён.');
-  const content = [];
-  if (text) content.push({ type: 'text', text: (image ? 'Подсказка: ' : 'Что съедено: ') + text });
-  if (image) content.push({ type: 'image_url', image_url: { url: image } });
-  if (!image) content.push({ type: 'text', text: 'Если масса не указана, оцени обычную порцию.' });
-  let r, em;
-  if (cfg.prov === 'openrouter') {
-    r = await orCall(cfg, content); em = aiErrText(r);
-    if (r.code === 401) throw new Error('OpenRouter не принял ключ: он неверный, удалён или отключён.' + (em ? ' (' + em + ')' : ''));
-    if (r.code === 402) throw new Error('На балансе OpenRouter закончились деньги или исчерпан лимит ключа.');
-    if (r.code === 403 || r.code === 451) throw new Error('OpenRouter отклонил запрос' + (em ? ' (' + em + ')' : '') + '. С 27 июня 2026 года он не обслуживает аккаунты из России — для работы здесь выберите Яндекс AI Studio.');
-  } else {
-    if (!cfg.folder) throw new Error('Не указан ID каталога Яндекса. Тренеру нужно дописать его в настройках ИИ.');
-    r = await yaCall(cfg, content); em = aiErrText(r);
-    if (r.code === 401) throw new Error('Яндекс не принял ключ. Проверьте, что это API-ключ сервисного аккаунта с областью yc.ai.languageModels.execute.' + (em ? ' (' + em + ')' : ''));
-    if (r.code === 403) throw new Error('Нет доступа: у сервисного аккаунта нет роли ai.languageModels.user или неверный ID каталога.' + (em ? ' (' + em + ')' : ''));
-    if (r.code === 402 || /billing|payment|баланс|платёж/i.test(em)) throw new Error('В Яндекс Облаке не активен платёжный аккаунт или закончились деньги.' + (em ? ' (' + em + ')' : ''));
+
+/* ---------- Продукт по штрихкоду: свои продукты, потом Open Food Facts ---------- */
+const OFF_UA = 'TarelkaShtanga/1.0 (Android)';
+const offUrl = code => `https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=code,product_name,product_name_ru,generic_name_ru,brands,quantity,serving_quantity,nutriments`;
+const bcDigits = s => String(s || '').replace(/\D/g, '');
+const r1 = v => Math.round(v * 10) / 10;
+const numIn = v => (v === '' || v == null || isNaN(v)) ? '' : String(r1(v)).replace('.', ',');
+function bcValid(code) {
+  if (!/^(\d{8}|\d{12,14})$/.test(code)) return false;
+  if (code.length === 8) return true; // EAN-8 и UPC-E проверяются по-разному — принимаем как есть
+  let sum = 0; const n = code.length;
+  for (let i = 0; i < n - 1; i++) sum += +code[n - 2 - i] * (i % 2 ? 1 : 3);
+  return (10 - sum % 10) % 10 === +code[n - 1];
+}
+function offParse(r) {
+  if (r.code === 404) return { found: false };
+  if (r.code < 0) return { err: 'net' };
+  if (r.code < 200 || r.code >= 300) return { err: 'http', code: r.code };
+  let j = null; try { j = JSON.parse(r.text); } catch (e) { return { err: 'bad' }; }
+  if (!j || j.status !== 1 || !j.product) return { found: false };
+  const p = j.product, n = p.nutriments || {}, num = v => { const x = toNum(v); return x >= 0 ? x : NaN; };
+  let kcal = num(n['energy-kcal_100g']);
+  if (isNaN(kcal) && num(n.energy_100g) >= 0) kcal = num(n.energy_100g) / 4.184;
+  const nm = String(p.product_name_ru || p.product_name || p.generic_name_ru || '').replace(/\s+/g, ' ').trim();
+  const brand = String(p.brands || '').split(',')[0].trim();
+  const name = nm && brand && !normTxt(nm).includes(normTxt(brand)) ? `${nm}, ${brand}` : (nm || brand);
+  const sq = num(p.serving_quantity);
+  return { found: true, f: { name: name.slice(0, 80), kcal: isNaN(kcal) ? '' : String(Math.round(kcal)), p: numIn(num(n.proteins_100g)), f: numIn(num(n.fat_100g)), c: numIn(num(n.carbohydrates_100g)), portion: sq > 0 && sq <= 2000 ? String(Math.round(sq)) : '100' },
+    qty: String(p.quantity || '').slice(0, 30) };
+}
+function showBc(bc) { ui.bc = bc; ui.sheet = 'barcode'; renderSheet(); }
+function toAddSheet(food, grams) {
+  if (food) ui.extra.push({ key: 'x|' + uid(), food, grams });
+  ui.sheet = 'add'; renderSheet(); $('#sheet').scrollTop = 0;
+}
+async function bcLookup(raw, scanned) {
+  const code = bcDigits(raw);
+  if (!/^\d{8,14}$/.test(code)) { showBc({ step: 'enter', code: String(raw || '').slice(0, 20), msg: scanned ? 'Это не похоже на штрихкод продукта. Введите цифры под штрихкодом вручную.' : 'В штрихкоде 8 или 13 цифр — проверьте, всё ли введено.' }); return; }
+  if (!scanned && !bcValid(code)) { showBc({ step: 'enter', code, msg: 'Похоже, одна цифра введена с ошибкой: контрольная цифра не сходится. Сверьте код с упаковкой.' }); return; }
+  const own = S.custom.find(c => c.barcode === code), f = own && foodById(own.id);
+  if (f) { toAddSheet(f, +own.portion || f.portion); toast('Нашлось в ваших продуктах: ' + own.name); return; }
+  showBc({ step: 'load', code });
+  const res = offParse(await httpGet(offUrl(code), { 'User-Agent': OFF_UA }));
+  if (ui.sheet !== 'barcode' || !ui.bc || ui.bc.code !== code || ui.bc.step !== 'load') return; // окно закрыли, пока шёл поиск
+  const tail = ' Перепишите калорийность и БЖУ с упаковки — продукт сохранится, и в следующий раз найдётся по штрихкоду сразу, даже без интернета.';
+  let msg, found = false;
+  if (res.found && res.f.kcal !== '') { found = true; msg = 'Нашлось в базе Open Food Facts. Сверьте цифры с упаковкой и поправьте, если нужно.'; }
+  else if (res.found) msg = 'Продукт нашёлся, но без калорийности.' + tail;
+  else if (res.err === 'net') msg = 'Нет связи с интернетом, базу продуктов не проверить.' + tail;
+  else if (res.err) msg = `База Open Food Facts не ответила${res.code ? ' (ошибка ' + res.code + ')' : ''}.` + tail;
+  else msg = 'Такого продукта нет в базе Open Food Facts.' + tail;
+  showBc({ step: 'form', code, found, msg, qty: res.qty || '', f: res.f || { name: '', kcal: '', p: '', f: '', c: '', portion: '100' } });
+}
+window.__onBarcode = (code, err) => {
+  if (!ui.sheet) resetAdd();
+  if (code) { bcLookup(code, true); return; }
+  if (!err || err === 'canceled') return;
+  if (err === 'installing') { toast('Модуль сканера загружается, попробуйте через минуту'); return; }
+  showBc({ step: 'enter', code: '', noScan: err === 'unavailable', msg: err === 'unavailable' ? 'Сканер штрихкодов на этом телефоне недоступен. Введите цифры под штрихкодом — они напечатаны на упаковке.' : 'Не получилось отсканировать штрихкод. Введите цифры под ним вручную.' });
+};
+function sheetBarcode() {
+  const bc = ui.bc || { step: 'enter', code: '' }, canScan = !!(NB && typeof NB.scanBarcode === 'function');
+  const head = sheetHead('Продукт по штрихкоду', 'bcBack');
+  if (bc.step === 'load') return `${head}<p class="bc-wait"><span class="spin" aria-hidden="true"></span>Ищу продукт ${esc(bc.code)} в базе Open Food Facts…</p><button class="btn btn-ghost" data-a="bcBack">Отмена</button>`;
+  if (bc.step === 'form') {
+    const f = bc.f || {};
+    const fld = (id, label, v, extra) => `<div class="field${extra || ''}"><label for="${id}">${label}</label><input id="${id}" class="input${id === 'bName' ? '' : ' num'}"${id === 'bName' ? '' : ' inputmode="decimal"'} value="${esc(v)}" autocomplete="off"></div>`;
+    return `${head}<div class="${bc.found ? 'tipbox' : 'banner plain'}"><p>${esc(bc.msg)}</p></div>
+      <p class="small muted num">Штрихкод ${esc(bc.code)}${bc.qty ? ' · упаковка ' + esc(bc.qty) : ''}</p>
+      <div class="grid2">${fld('bName', 'Название', f.name, ' span2')}${fld('bKcal', 'Ккал на 100 г', f.kcal)}${fld('bPortion', 'Порция, г', f.portion)}</div>
+      <div class="field"><span class="lbl">Белки, жиры и углеводы на 100 г</span><div class="grid3 bju">${fld('bP', 'Белки, г', f.p)}${fld('bF', 'Жиры, г', f.f)}${fld('bC', 'Углеводы, г', f.c)}</div></div>
+      <p class="hint">Порция добавится в «${esc(ui.meal)}» сейчас и будет предлагаться в следующий раз. Продукт сохранится в «Профиль» → «Мои продукты».</p>
+      <div class="row"><button class="btn btn-primary grow" data-a="bcSave">Сохранить и добавить</button><button class="btn btn-ghost" data-a="bcBack">Отмена</button></div>`;
   }
-  if (r.code === 429) throw new Error('Слишком много запросов. Попробуйте через минуту.');
-  if (r.code < 0) throw new Error('Нет связи с сервисом ИИ. Проверьте интернет.' + (r.text && r.text !== 'timeout' ? ' (' + String(r.text).slice(0, 80) + ')' : ''));
-  if (r.code < 200 || r.code >= 300 || em) throw new Error('Сервис ИИ ответил ошибкой' + (r.code >= 300 ? ' (' + r.code + ')' : '') + (em ? ': ' + em : '') + '. Попробуйте ещё раз.');
-  let msg = '';
-  try { const j = JSON.parse(r.text); msg = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || ''; } catch (e) { msg = ''; }
-  if (Array.isArray(msg)) msg = msg.map(x => x.text || '').join('');
-  const m = String(msg).replace(/<think>[\s\S]*?<\/think>/g, '').match(/\{[\s\S]*\}/);
-  let data = null; try { data = m ? JSON.parse(m[0]) : null; } catch (e) { data = null; }
-  if (!data || !Array.isArray(data.items)) throw new Error('ИИ ответил непонятно. Попробуйте ещё раз или напишите текстом.');
-  const items = data.items.map(it => ({ name: String(it.name || '').trim().slice(0, 60), grams: Math.round(toNum(it.grams) || 0), kcal: toNum(it.kcal) || 0, p: toNum(it.p) || 0, f: toNum(it.f) || 0, c: toNum(it.c) || 0 }))
-    .filter(it => it.name && it.grams > 0 && it.kcal >= 0 && it.kcal < 5000);
-  return { items, comment: String(data.comment || '').slice(0, 200) };
+  return `${head}${bc.msg ? `<div class="banner plain"><p>${esc(bc.msg)}</p></div>` : ''}
+    ${canScan && !bc.noScan ? `<button class="btn btn-primary" data-a="bcScan">${IC.barcode} Сканировать камерой</button>` : ''}
+    <div class="field"><label for="bcCode">Цифры под штрихкодом</label><div class="row"><input id="bcCode" class="input grow num" inputmode="numeric" enterkeyhint="search" maxlength="20" autocomplete="off" placeholder="4601234567890" value="${esc(bc.code)}"><button class="btn btn-ghost" data-a="bcFind">Найти</button></div>
+      <p class="hint">Обычно 13 цифр. Сначала ищу среди ваших продуктов, потом в открытой базе Open Food Facts — в ней много продуктов из российских магазинов.</p></div>`;
 }
-function orCall(cfg, content) {
-  return httpPost(OR_URL,
-    { 'Authorization': 'Bearer ' + cfg.key, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/garenaalex322-dotcom/juliya', 'X-Title': 'Tarelka i shtanga' },
-    JSON.stringify({ model: cfg.model, temperature: 0.2, max_tokens: 1500, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: AI_PROMPT }, { role: 'user', content }] }));
+
+/* ---------- Мои блюда: рецепт из продуктов ---------- */
+const dishList = () => S.custom.filter(c => c.recipe);
+function dishTotals(d) {
+  const t = { kcal: 0, p: 0, f: 0, c: 0, raw: 0 };
+  d.items.forEach(it => { const g = toNum(it.grams) || 0, m = g / 100; t.raw += g; t.kcal += it.kcal * m; t.p += it.p * m; t.f += it.f * m; t.c += it.c * m; });
+  const out = toNum(d.out); t.w = out > 0 ? out : t.raw;
+  return t;
 }
-async function yaCall(cfg, content) {
-  const send = (auth, suf) => httpPost(YA_URL,
-    { 'Authorization': auth + ' ' + cfg.key, 'Content-Type': 'application/json', 'OpenAI-Project': cfg.folder, 'x-folder-id': cfg.folder, 'x-data-logging-enabled': 'false' },
-    JSON.stringify({ model: 'gpt://' + cfg.folder + '/' + cfg.model + suf, temperature: 0.2, max_tokens: 4000, messages: [{ role: 'system', content: AI_PROMPT }, { role: 'user', content }] }));
-  const known = lsJson('tarelka-ya-mode');
-  if (known && known.k === cfg.key.slice(-6)) { const r = await send(known.a, known.s); if (r.code !== 401 && r.code !== 404) return r; }
-  let first = null, best = null;
-  for (const [a, sfx] of [['Api-Key', ''], ['Bearer', ''], ['Api-Key', '/latest'], ['Bearer', '/latest']]) {
-    const r = await send(a, sfx); if (!first) first = r;
-    if (r.code >= 200 && r.code < 300) { lsSet('tarelka-ya-mode', JSON.stringify({ k: cfg.key.slice(-6), a, s: sfx })); return r; }
-    const retry = r.code === 401 || r.code === 403 || r.code === 404 || (r.code === 400 && /model|uri/i.test(aiErrText(r)));
-    if (!retry) return r;
-    if (r.code !== 401 && !best) best = r;
-  }
-  return best || first;
+function dishTotHtml(d) {
+  if (!d.items.length) return `<p class="hint">Добавьте продукты — здесь появятся калории блюда и порции.</p>`;
+  const t = dishTotals(d), per = v => t.w > 0 ? v / t.w * 100 : 0, pg = toNum(d.portion);
+  return `<div class="norm"><span class="eyebrow">Всё блюдо</span><b class="big">${f0(t.kcal)} ккал</b>
+    <p class="small num">${f0(t.w)} г${toNum(d.out) > 0 ? ' готового' : ''} · Б ${f0(t.p)} · Ж ${f0(t.f)} · У ${f0(t.c)} г</p>
+    <p class="small num"><b>На 100 г:</b> ${f0(per(t.kcal))} ккал · Б ${f1(per(t.p))} · Ж ${f1(per(t.f))} · У ${f1(per(t.c))}</p>
+    ${pg > 0 ? `<p class="small num"><b>Порция ${f0(pg)} г:</b> ${f0(per(t.kcal) * pg / 100)} ккал · Б ${f0(per(t.p) * pg / 100)} · Ж ${f0(per(t.f) * pg / 100)} · У ${f0(per(t.c) * pg / 100)}</p>` : ''}</div>`;
 }
-function aiErrText(r) {
-  let j = null; try { j = JSON.parse(r.text); } catch (x) { return r.code >= 300 && !/<html|<!doctype/i.test(r.text || '') ? String(r.text || '').trim().slice(0, 120) : ''; }
-  if (!j || typeof j !== 'object') return '';
-  const e = j.error;
-  if (typeof e === 'string') return e.slice(0, 160);
-  if (e && typeof e === 'object') return String(e.message || e.code || 'ошибка').slice(0, 160);
-  if (r.code >= 300 && j.message) return String(j.message).slice(0, 160);
-  return '';
+function dishRow(it, i) {
+  return `<div class="pv-item dish-row"><div class="pv-name">${esc(it.name)}<small>${f0(it.kcal)} ккал на 100 г</small></div>
+    <label class="pv-g"><input class="input input-sm num" type="text" inputmode="decimal" data-in="dishG" data-i="${i}" value="${esc(it.grams)}" aria-label="Граммы: ${esc(it.name)}">г</label>
+    <span class="pv-kcal" id="dk${i}">${f0(it.kcal * (toNum(it.grams) || 0) / 100)} ккал</span>
+    <button class="x-btn" data-a="dishDel" data-i="${i}" aria-label="Убрать: ${esc(it.name)}">${IC.x}</button></div>`;
 }
-function aiFood(it) {
-  const g = it.grams, per = v => Math.round(Math.max(0, v) / g * 1000) / 10;
-  return { id: 'ai' + uid(), name: it.name, kcal: per(it.kcal), p: per(it.p), f: per(it.f), c: per(it.c), portion: g, piece: 0, ai: true };
+function sheetDish() {
+  const d = ui.dish; if (!d) return sheetHead('Блюдо не найдено');
+  const t = dishTotals(d), back = d.from === 'add' ? 'dishBack' : 'closeSheet';
+  return `${sheetHead(d.id ? 'Изменить блюдо' : 'Новое блюдо', back)}
+  <div class="field"><label for="dName">Название</label><input id="dName" class="input" data-in="dishName" value="${esc(d.name)}" placeholder="Например: борщ домашний" autocomplete="off"></div>
+  <div class="field"><span class="lbl">Продукты и сколько граммов положили</span>
+    ${d.items.length ? `<div class="pv">${d.items.map(dishRow).join('')}</div>` : `<p class="hint">Пока пусто. Найдите продукты ниже — по одному, с сырым весом.</p>`}</div>
+  <div class="field"><label for="dQ">Добавить продукт</label><input id="dQ" class="input" type="search" data-in="dishQ" placeholder="Свёкла, говядина, масло…" autocomplete="off" value="${esc(d.q)}"><div id="dishSr"></div></div>
+  <details class="howto"><summary>Продукта нет в базе</summary>
+    <div class="grid2"><div class="field span2"><label for="diName">Название</label><input id="diName" class="input" autocomplete="off"></div>
+      <div class="field"><label for="diKcal">Ккал на 100 г</label><input id="diKcal" class="input num" inputmode="decimal"></div>
+      <div class="field"><label for="diG">Сколько граммов</label><input id="diG" class="input num" inputmode="decimal"></div>
+      <div class="field"><label for="diP">Белки на 100 г</label><input id="diP" class="input num" inputmode="decimal" placeholder="необязательно"></div>
+      <div class="field"><label for="diF">Жиры на 100 г</label><input id="diF" class="input num" inputmode="decimal" placeholder="необязательно"></div>
+      <div class="field"><label for="diC">Углеводы на 100 г</label><input id="diC" class="input num" inputmode="decimal" placeholder="необязательно"></div></div>
+    <button class="btn btn-ghost btn-sm" data-a="dishMan">Добавить в блюдо</button></details>
+  <div class="grid2"><div class="field"><label for="dOut">Вес готового блюда, г</label><input id="dOut" class="input num" inputmode="decimal" data-in="dishOut" value="${esc(d.out)}" placeholder="${t.raw > 0 ? esc('≈ ' + f0(t.raw)) : 'если взвешивали'}"></div>
+    <div class="field"><label for="dPortion">Обычная порция, г</label><input id="dPortion" class="input num" inputmode="decimal" data-in="dishPortion" value="${esc(d.portion)}"></div></div>
+  <p class="hint">Крупы и макароны при варке набирают воду, мясо и овощи при жарке теряют. Взвесьте кастрюлю с готовым блюдом и вычтите вес пустой — калории на 100 г будут точнее. Если поле пустое, считаю по сумме продуктов.</p>
+  <div id="dishTot">${dishTotHtml(d)}</div>
+  ${d.del ? `<div class="confirm"><p>Удалить блюдо «${esc(d.name)}»? Записи в дневнике останутся.</p><div class="row"><button class="btn btn-warn btn-sm" data-a="dishRemoveYes">Удалить</button><button class="btn btn-ghost btn-sm" data-a="dishRemoveNo">Отмена</button></div></div>`
+    : `<div class="row"><button class="btn btn-primary grow" data-a="dishSave">${d.from === 'add' && !d.id ? 'Сохранить и добавить' : 'Сохранить блюдо'}</button>${d.id ? `<button class="btn btn-warn" data-a="dishRemove">Удалить</button>` : ''}</div>`}`;
 }
-async function shrinkImage(file) {
-  let src;
-  try { src = await createImageBitmap(file); }
-  catch (e) {
-    src = await new Promise((res, rej) => { const u = URL.createObjectURL(file), im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = u; });
-  }
-  const w = src.width, h = src.height, sc = Math.min(1, 1024 / Math.max(w, h));
-  const c = document.createElement('canvas'); c.width = Math.round(w * sc); c.height = Math.round(h * sc);
-  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
-  return c.toDataURL('image/jpeg', 0.8);
+function renderDishSearch() {
+  const box = $('#dishSr'), d = ui.dish; if (!box || !d) return;
+  const q = d.q.trim(), res = q.length >= 2 ? searchFoods(q).filter(f => f.id !== d.id && !f.water) : [];
+  box.innerHTML = res.length ? `<div class="results">${res.map(f => `<button class="res" data-a="dishPick" data-id="${esc(f.id)}"><span>${esc(f.name)}</span><span>${f0(f.kcal)} ккал / 100 ${f.liq ? 'мл' : 'г'}</span></button>`).join('')}</div>`
+    : (q.length >= 2 ? `<p class="hint">Ничего не нашлось. Впишите продукт вручную — «Продукта нет в базе».</p>` : '');
 }
-async function runAi(text, file) {
-  if (ui.aiBusy) return;
-  ui.aiBusy = true; ui.aiNote = ''; renderSheet();
-  try {
-    let img = null;
-    if (file) { img = await shrinkImage(file); ui.aiPhoto = img; renderSheet(); }
-    const r = await aiRecognize(text, img);
-    if (!r.items.length) toast(file ? 'На фото не нашлось еды. Попробуйте снять ближе или напишите текстом.' : 'ИИ не смог разобрать описание.');
-    r.items.forEach(it => { ui.extra.push({ key: 'x|' + uid(), food: aiFood(it), grams: it.grams, ai: true }); });
-    if (!file && r.items.length) ui.aiText = ui.text;
-    ui.aiNote = r.comment;
-  } catch (e) { toast(e.message || 'Не получилось распознать'); }
-  ui.aiBusy = false; if (ui.sheet === 'add') renderSheet();
+function updateDishTot() {
+  const d = ui.dish; if (!d) return;
+  const box = $('#dishTot'); if (box) box.innerHTML = dishTotHtml(d);
+  const o = $('#dOut'), raw = dishTotals(d).raw; if (o) o.placeholder = raw > 0 ? '≈ ' + f0(raw) : 'если взвешивали';
 }
+function openDish(c, from) {
+  ui.dish = c ? { id: c.id, name: c.name, items: c.recipe.items.map(x => ({ name: x.name, grams: numIn(x.grams), kcal: +x.kcal || 0, p: +x.p || 0, f: +x.f || 0, c: +x.c || 0 })), out: c.recipe.out ? numIn(c.recipe.out) : '', portion: String(c.portion || 300), q: '', from }
+    : { id: null, name: '', items: [], out: '', portion: '300', q: '', from };
+  ui.sheet = 'dish'; renderSheet(); $('#sheet').scrollTop = 0;
+  if (!c) setTimeout(() => { const n = $('#dName'); if (n) n.focus(); }, 60);
+}
+function dishDone(d) { ui.dish = null; if (d.from === 'add') toAddSheet(null); else { ui.sheet = null; renderSheet(); } render(); }
 
 /* ================= Таймер отдыха ================= */
 let rest = null, restT = null;
@@ -1482,7 +1520,7 @@ function render() {
   const want = !!S.session;
   if (want !== keepOn) { keepOn = want; nb('keepScreenOn', want); }
 }
-const SHEETS = { add: sheetAdd, edit: sheetEdit, steps: sheetSteps, weight: sheetWeight, measures: sheetMeasures, pick: sheetPick, ex: sheetEx, art: sheetArt, templates: sheetTemplates, import: sheetImport, workout: sheetWorkout };
+const SHEETS = { add: sheetAdd, edit: sheetEdit, steps: sheetSteps, weight: sheetWeight, measures: sheetMeasures, pick: sheetPick, ex: sheetEx, art: sheetArt, templates: sheetTemplates, import: sheetImport, workout: sheetWorkout, water: sheetWater, dish: sheetDish, barcode: sheetBarcode };
 function openSheet(kind) { ui.sheet = kind; renderSheet(); const sh = $('#sheet'); sh.scrollTop = 0; if (kind === 'add') setTimeout(() => { const ta = $('#foodText'); if (ta) ta.focus(); }, 60); }
 function renderSheet() {
   const back = $('#sheetBack'), sh = $('#sheet');
@@ -1491,6 +1529,7 @@ function renderSheet() {
   back.hidden = false; document.body.style.overflow = 'hidden';
   sh.innerHTML = (SHEETS[ui.sheet] || (() => ''))();
   if (ui.sheet === 'add') { renderPreview(); renderSearch(); }
+  if (ui.sheet === 'dish') renderDishSearch();
   if (ui.sheet === 'ex') { animPaused = false; startAnim(); }
   if (ui.sheet === 'pick') drawThumbs(sh);
 }
@@ -1503,7 +1542,32 @@ const A = {
   dayPrev() { ui.date = addDays(ui.date, -1); render(); },
   dayNext() { if (ui.date < todayKey()) { ui.date = addDays(ui.date, 1); render(); } },
   gotoDay(b) { ui.date = b.dataset.k; ui.tab = 'today'; render(); window.scrollTo(0, 0); },
-  water(b) { const i = +b.dataset.i, k = ui.date; mutate(() => { const d = getDay(k, true); const filled = Math.floor((d.water || 0) / 250); d.water = filled === i + 1 ? i * 250 : (i + 1) * 250; }); render(); },
+  water(b) {
+    const i = +b.dataset.i, k = ui.date, gl = glassMl(); let delta = 0;
+    mutate(() => { const d = getDay(k, true), old = d.water || 0, filled = Math.floor(old / gl); d.water = filled === i + 1 ? i * gl : (i + 1) * gl; delta = d.water - old; });
+    if (delta > 0) waterHist(k).push(delta); else waterHist(k).length = 0;
+    render();
+  },
+  waterUndo() {
+    const k = ui.date, cur = getDay(k).water || 0; if (!(cur > 0)) return;
+    const h = waterHist(k), amt = Math.min(cur, h.length ? h.pop() : glassMl());
+    mutate(() => { const d = getDay(k, true); d.water = Math.max(0, (d.water || 0) - amt); });
+    render(); toast(`Вода: −${f0(amt)} мл`);
+  },
+  openWater(b) { ui.glassOwn = false; openSheet('water'); if (b.dataset.f === 'add') setTimeout(() => { const i = $('#wAdd'); if (i) i.focus(); }, 60); },
+  waterAdd(b) {
+    const v = b.dataset.v ? +b.dataset.v : Math.round(toNum(($('#wAdd') || {}).value));
+    if (!(v > 0 && v <= 5000)) { toast('Впишите, сколько миллилитров выпили, например 120'); const i = $('#wAdd'); if (i) i.focus(); return; }
+    const k = ui.date; mutate(() => { const d = getDay(k, true); d.water = (d.water || 0) + v; }); waterHist(k).push(v);
+    ui.sheet = null; renderSheet(); render(); toast(`Вода: +${f0(v)} мл`);
+  },
+  glassSet(b) { const v = +b.dataset.v; ui.glassOwn = false; mutate(() => { S.profile.glass = String(v); }); renderSheet(); render(); },
+  glassOwn() { ui.glassOwn = true; renderSheet(); setTimeout(() => { const i = $('#glassIn'); if (i) i.focus(); }, 30); },
+  glassSave() {
+    const v = Math.round(toNum(($('#glassIn') || {}).value));
+    if (!(v >= 50 && v <= 1000)) { toast('Впишите объём стакана от 50 до 1000 мл'); const i = $('#glassIn'); if (i) i.focus(); return; }
+    ui.glassOwn = false; mutate(() => { S.profile.glass = String(v); }); renderSheet(); render(); toast(`Стакан: ${v} мл`);
+  },
   openAdd(b) { resetAdd(b.dataset.meal); openSheet('add'); },
   closeSheet() { closeSheet(); },
   pickMeal(b) { ui.meal = b.dataset.v; $('#sheet').querySelectorAll('[data-a="pickMeal"]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.v === ui.meal))); updateCommit(); },
@@ -1520,6 +1584,71 @@ const A = {
   },
   pickFood(b) { const f = foodById(b.dataset.id); if (!f) return; ui.extra.push({ key: 'x|' + uid(), food: f, grams: f.portion }); ui.q = ''; const s = $('#foodSearch'); if (s) s.value = ''; renderSearch(); renderPreview(); },
   pickRecent(b) { const r = S.recent[+b.dataset.i], f = r && foodById(r.id); if (!f) return; ui.extra.push({ key: 'x|' + uid(), food: f, grams: r.grams }); renderPreview(); },
+  /* штрихкод */
+  bcScan() {
+    if (!(NB && typeof NB.scanBarcode === 'function')) { A.bcOpen(); return; }
+    try { NB.scanBarcode(); } catch (e) { showBc({ step: 'enter', code: '', msg: 'Сканер не запустился. Введите цифры под штрихкодом вручную.' }); }
+  },
+  bcOpen() { showBc({ step: 'enter', code: '' }); setTimeout(() => { const i = $('#bcCode'); if (i) i.focus(); }, 60); },
+  bcFind() { const i = $('#bcCode'), v = ((i || {}).value || '').trim(); if (!v) { toast('Введите цифры под штрихкодом'); if (i) i.focus(); return; } bcLookup(v, false); },
+  bcBack() { ui.bc = null; toAddSheet(null); },
+  bcSave() {
+    const bc = ui.bc; if (!bc || bc.step !== 'form') return;
+    const val = id => (($('#' + id) || {}).value || '').trim(), foc = id => { const e = $('#' + id); if (e) e.focus(); };
+    const name = val('bName').replace(/\s+/g, ' '), kc = toNum(val('bKcal')), g = toNum(val('bPortion'));
+    if (!name) { toast('Впишите название продукта'); foc('bName'); return; }
+    if (!(kc >= 0 && kc <= 950)) { toast('Впишите калорийность на 100 г — она есть на упаковке'); foc('bKcal'); return; }
+    if (!(g > 0 && g <= 5000)) { toast('Впишите порцию в граммах, например 100'); foc('bPortion'); return; }
+    const rec = { id: 'c' + uid(), name, kcal: r1(kc), p: nn(val('bP')), f: nn(val('bF')), c: nn(val('bC')), piece: 0, portion: Math.round(g), barcode: bc.code };
+    mutate(() => { S.custom = S.custom.filter(c => c.barcode !== rec.barcode); S.custom.push(rec); });
+    ui.bc = null; toAddSheet(foodById(rec.id), rec.portion); toast('Продукт сохранён в «Мои продукты»');
+  },
+  /* мои блюда */
+  dishNew() { openDish(null, ui.sheet === 'add' ? 'add' : 'profile'); },
+  dishEdit(b) { const c = S.custom.find(x => x.id === b.dataset.id && x.recipe); if (c) openDish(c, ui.sheet === 'add' ? 'add' : 'profile'); },
+  dishAdd(b) { const f = foodById(b.dataset.id); if (!f) return; ui.extra.push({ key: 'x|' + uid(), food: f, grams: f.portion }); renderPreview(); },
+  dishBack() { ui.dish = null; toAddSheet(null); },
+  dishPick(b) {
+    const d = ui.dish, f = foodById(b.dataset.id); if (!d || !f) return;
+    d.items.push({ name: f.name, grams: String(f.portion || 100), kcal: +f.kcal || 0, p: +f.p || 0, f: +f.f || 0, c: +f.c || 0 }); d.q = '';
+    renderSheet(); const i = $(`[data-in="dishG"][data-i="${d.items.length - 1}"]`); if (i) { i.focus(); i.select(); }
+  },
+  dishDel(b) { const d = ui.dish; if (!d) return; d.items.splice(+b.dataset.i, 1); renderSheet(); },
+  dishMan() {
+    const d = ui.dish; if (!d) return;
+    const val = id => (($('#' + id) || {}).value || '').trim(), foc = id => { const e = $('#' + id); if (e) e.focus(); };
+    const name = val('diName').replace(/\s+/g, ' '), kc = toNum(val('diKcal')), g = toNum(val('diG'));
+    if (!name) { toast('Впишите название продукта'); foc('diName'); return; }
+    if (!(kc >= 0 && kc <= 950)) { toast('Впишите калорийность на 100 г'); foc('diKcal'); return; }
+    if (!(g > 0 && g <= 50000)) { toast('Впишите, сколько граммов положили'); foc('diG'); return; }
+    d.items.push({ name, grams: numIn(g), kcal: r1(kc), p: nn(val('diP')), f: nn(val('diF')), c: nn(val('diC')) }); renderSheet();
+  },
+  dishSave() {
+    const d = ui.dish; if (!d) return;
+    const foc = id => { const e = $('#' + id); if (e) e.focus(); }, name = d.name.trim().replace(/\s+/g, ' ');
+    if (!name) { toast('Впишите название блюда'); foc('dName'); return; }
+    const items = d.items.map(it => ({ name: it.name, grams: r1(toNum(it.grams) || 0), kcal: r1(it.kcal), p: r1(it.p), f: r1(it.f), c: r1(it.c) })).filter(it => it.grams > 0);
+    if (!items.length) { toast('Добавьте хотя бы один продукт с граммами'); foc('dQ'); return; }
+    const out = toNum(d.out), portion = toNum(d.portion);
+    if (String(d.out).trim() !== '' && !(out > 0 && out <= 50000)) { toast('Вес готового блюда — в граммах, например 1800'); foc('dOut'); return; }
+    if (!(portion > 0 && portion <= 5000)) { toast('Впишите обычную порцию в граммах, например 300'); foc('dPortion'); return; }
+    const dup = S.custom.find(c => c.id !== d.id && normTxt(c.name).trim() === normTxt(name));
+    if (dup) { toast(`«${dup.name}» уже есть в ваших продуктах — назовите блюдо по-другому`); foc('dName'); return; }
+    const t = dishTotals({ items, out: out > 0 ? out : '' }), per = v => r1(v / t.w * 100);
+    const rec = { id: d.id || 'c' + uid(), name, kcal: per(t.kcal), p: per(t.p), f: per(t.f), c: per(t.c), piece: 0, portion: Math.round(portion), recipe: { items, out: out > 0 ? Math.round(out) : null } };
+    mutate(() => { const i = S.custom.findIndex(c => c.id === rec.id); if (i >= 0) S.custom[i] = rec; else S.custom.push(rec); });
+    if (d.from === 'add' && !d.id) { ui.dish = null; toAddSheet(foodById(rec.id), rec.portion); render(); toast('Блюдо сохранено и добавлено'); return; }
+    dishDone(d); toast('Блюдо сохранено');
+  },
+  dishRemove() { if (ui.dish) { ui.dish.del = true; renderSheet(); } },
+  dishRemoveNo() { if (ui.dish) { ui.dish.del = false; renderSheet(); } },
+  dishRemoveYes() {
+    const d = ui.dish; if (!d) return; let rem = null, idx = -1;
+    mutate(() => { idx = S.custom.findIndex(c => c.id === d.id); if (idx >= 0) rem = S.custom.splice(idx, 1)[0]; });
+    if (d.from === 'add') ui.extra = ui.extra.filter(x => x.food.id !== d.id);
+    dishDone(d); if (rem) { ui.undo = { custom: rem, idx }; toast(`Удалено: ${rem.name}`, { a: 'undoCustom', label: 'Вернуть' }); }
+  },
+  undoCustom() { const u = ui.undo; if (!u || !u.custom) return; mutate(() => { if (!S.custom.some(c => c.id === u.custom.id)) S.custom.splice(Math.min(u.idx, S.custom.length), 0, u.custom); }); ui.undo = null; $('#toast').hidden = true; if (ui.sheet === 'add') renderSheet(); render(); },
   commitAdd() {
     const items = ui.pv.slice(); if (!items.length) return; const k = ui.date, meal = ui.meal; let n = 0, kc = 0, water = 0;
     mutate(() => {
@@ -1684,11 +1813,15 @@ const A = {
     mutate(() => { S.custom.push({ id: 'c' + uid(), name, kcal: kc, p: toNum($('#cP').value) || 0, f: toNum($('#cF').value) || 0, c: toNum($('#cC').value) || 0, piece: toNum($('#cPiece').value) || 0 }); });
     render(); toast('Продукт добавлен');
   },
-  delCustom(b) { mutate(() => { S.custom = S.custom.filter(c => c.id !== b.dataset.id); }); render(); },
+  delCustom(b) {
+    let rem = null, idx = -1;
+    mutate(() => { idx = S.custom.findIndex(c => c.id === b.dataset.id); if (idx >= 0) rem = S.custom.splice(idx, 1)[0]; });
+    render(); if (rem) { ui.undo = { custom: rem, idx }; toast(`Удалено: ${rem.name}`, { a: 'undoCustom', label: 'Вернуть' }); }
+  },
   makeBackup() { ui.backup = 'BAK1:' + b64e(JSON.stringify(S)); render(); },
   copyBackup() { copyText(ui.backup, $('#backupTa')); },
   restore() { const r = decodeCode($('#restoreTa').value, ['BAK1:']); if (!r || !r.data || typeof r.data !== 'object' || !r.data.days) { toast('Код не подходит. Скопируйте его целиком, начиная с BAK1:'); return; } ui.pendingRestore = r.data; ui.confirm = 'restore'; render(); },
-  restoreYes() { const d = ui.pendingRestore; if (!d) return; d.demo = false; const link = S.link, ai = S.ai; S = migrate(d) || blankState(); S.link = link; S.ai = ai; Sync.last = {}; save(true); ui.pendingRestore = null; ui.confirm = null; ui.date = todayKey(); render(); toast('Записи восстановлены'); },
+  restoreYes() { const d = ui.pendingRestore; if (!d) return; d.demo = false; const link = S.link; S = migrate(d) || blankState(); S.link = link; Sync.last = {}; save(true); ui.pendingRestore = null; ui.confirm = null; ui.date = todayKey(); render(); toast('Записи восстановлены'); },
   wipe() { ui.confirm = 'wipe'; render(); },
   wipeYes() { const linked = !!S.link; Sync.stop(); S = blankState(); save(); if (linked && FB.ok) FB.auth.signOut().catch(() => { }); ui.confirm = null; ui.report = ''; ui.backup = ''; ui.date = todayKey(); render(); toast('Все данные удалены'); },
   hideLink() { lsSet('tarelka-hide-link', '1'); render(); },
@@ -1713,7 +1846,7 @@ const A = {
     ui.linkBusy = false; render();
   },
   unlink() { ui.confirm = 'unlink'; render(); },
-  unlinkYes() { Sync.stop(); lsSet(KEY + '-sh-client-' + (S.link && S.link.clientId), null); delete S.link; S.ai = null; save(); if (FB.ok) FB.auth.signOut().catch(() => { }); ui.confirm = null; render(); toast('Связь с тренером отключена'); },
+  unlinkYes() { Sync.stop(); lsSet(KEY + '-sh-client-' + (S.link && S.link.clientId), null); delete S.link; save(); if (FB.ok) FB.auth.signOut().catch(() => { }); ui.confirm = null; render(); toast('Связь с тренером отключена'); },
   toCoach() {
     if (S.link) { toast('Этот телефон подключён к тренеру как телефон подопечной. Сначала отключитесь в «Профиле».'); return; }
     MODE = 'coach'; lsSet('tarelka-mode', 'coach'); S = blankState(); CO.err = ''; stopRest(); ui.sheet = null; renderSheet();
@@ -1752,34 +1885,8 @@ const A = {
   coDel(b) { CO.confirm = 'del:' + b.dataset.id; render(); },
   async coDelYes(b) { CO.confirm = null; try { await Coach.remove(b.dataset.id); toast('Карточка удалена'); } catch (e) { toast(fbErr(e)); } render(); },
   coNo() { CO.confirm = null; render(); },
-  async coSaveAi() {
-    const prov = CO.aiProv || CO.ai.prov || 'yandex';
-    const typed = ($('#aiKey').value || '').trim().replace(/\s+/g, '');
-    const key = typed || (CO.ai.prov === prov ? CO.ai.key : '');
-    const folder = prov === 'yandex' ? ($('#aiFolder').value || '').trim() : '', model = prov === 'openrouter' ? ($('#aiModel').value || OR_MODELS[0][0]) : YA_MODEL;
-    if (!key) { toast(prov === 'openrouter' ? 'Вставьте ключ OpenRouter' : 'Вставьте API-ключ Яндекса'); return; }
-    if (prov === 'yandex' && /^sk-or-/.test(key)) { toast('Это ключ OpenRouter. Для Яндекса нужен API-ключ сервисного аккаунта.'); return; }
-    if (prov === 'openrouter' && !/^sk-or-/.test(key)) { toast('Ключ OpenRouter начинается с «sk-or-». Проверьте, что скопировали его целиком.'); return; }
-    if (prov === 'yandex' && !/^[a-z0-9]{10,30}$/i.test(folder)) { toast('Впишите ID каталога — строка вида b1g… из консоли Яндекс Облака'); return; }
-    CO.busy = true; render();
-    try { await Coach.saveAi(prov, key, folder, model); CO.aiProv = null; toast('Ключ сохранён и отправлен подопечным'); } catch (e) { toast(fbErr(e)); CO.busy = false; render(); return; }
-    CO.busy = false; render();
-    if (key) A.coTestAi();
-  },
-  async coTestAi() {
-    if (!CO.ai.key) { toast('Сначала вставьте ключ'); return; }
-    CO.aiMsg = 'Проверяю ключ…'; CO.aiOk = null; render();
-    try {
-      const r = await aiRecognize('яблоко 100 г', null);
-      CO.aiOk = true; CO.aiMsg = 'Ключ работает: ИИ распознал «' + ((r.items[0] && r.items[0].name) || 'яблоко') + '».';
-    } catch (e) { CO.aiOk = false; CO.aiMsg = e.message || String(e); }
-    render();
-  },
-  async coDelAi() { CO.busy = true; render(); try { await Coach.saveAi(CO.ai.prov || 'yandex', '', CO.ai.folder || '', CO.ai.model); toast('Ключ удалён'); } catch (e) { toast(fbErr(e)); } CO.busy = false; render(); },
   coLogout() { Coach.logout(); },
-  coachBack() { Coach.close(); },
-  aiPhoto() { const i = $('#photoIn'); if (i) i.click(); },
-  aiText() { const t = ui.text.trim(); if (!t) { toast('Напишите, что съели, например: «плов с курицей, половина тарелки»'); const ta = $('#foodText'); if (ta) ta.focus(); return; } runAi(t, null); }
+  coachBack() { Coach.close(); }
 };
 function newProgEx(e) { const k = e.kind || 'w'; return { id: uid(), exId: e.id, name: e.n, sets: k === 'c' ? 1 : 3, reps: k === 't' ? '30' : k === 'c' ? '20' : '10–12' }; }
 function sessionEx(exId, name, sets, reps, target) {
@@ -1802,6 +1909,11 @@ const IN = {
   foodSearch(el) { ui.q = el.value; renderSearch(); },
   pvGrams(el) { const i = +el.dataset.i, x = ui.pv[i]; if (!x) return; const v = toNum(el.value); ui.over[x.key] = isNaN(v) ? '' : v; x.grams = isNaN(v) ? 0 : v; const c = $('#pvk' + i); if (c && !x.food.water) c.textContent = f0(pvKcal(x)) + ' ккал'; updateCommit(); },
   editGrams(el) { const it = getDay(ui.date).items.find(x => x.id === ui.editId); if (it) $('#eInfo').textContent = editInfo(it, el.value); },
+  dishName(el) { if (ui.dish) ui.dish.name = el.value; },
+  dishQ(el) { if (ui.dish) { ui.dish.q = el.value; renderDishSearch(); } },
+  dishG(el) { const d = ui.dish, it = d && d.items[+el.dataset.i]; if (!it) return; it.grams = el.value; const c = $('#dk' + el.dataset.i); if (c) c.textContent = f0(it.kcal * (toNum(it.grams) || 0) / 100) + ' ккал'; updateDishTot(); },
+  dishOut(el) { if (ui.dish) { ui.dish.out = el.value; updateDishTot(); } },
+  dishPortion(el) { if (ui.dish) { ui.dish.portion = el.value; updateDishTot(); } },
   setW(el) { if (!S.session) return; S.session.ex[+el.dataset.i].sets[+el.dataset.j].w = el.value.trim().replace(',', '.'); save(); },
   setR(el) { if (!S.session) return; S.session.ex[+el.dataset.i].sets[+el.dataset.j].r = el.value.trim(); save(); },
   sessNote(el) { if (!S.session) return; S.session.note = el.value; save(); },
@@ -1823,9 +1935,7 @@ const CH = {
   pf(el) { mutate(() => { S.profile[el.dataset.f] = el.value; }); const nbx = $('#normBox'); if (nbx) nbx.innerHTML = normHtml(); },
   pfManual(el) { mutate(() => { S.profile.manual = el.checked; }); render(); },
   repDetail(el) { ui.repDetail = el.checked; ui.report = ''; },
-  exSel(el) { ui.exSel = el.value; render(); },
-  aiProv(el) { CO.aiProv = el.value; CO.aiMsg = ''; CO.aiOk = null; render(); },
-  photo(el) { const f = el.files && el.files[0]; el.value = ''; if (f) runAi(ui.text.trim(), f); }
+  exSel(el) { ui.exSel = el.value; render(); }
 };
 
 document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b || b.disabled) return; const fn = A[b.dataset.a]; if (fn) { e.preventDefault(); fn(b, e); } });
@@ -1833,10 +1943,11 @@ document.addEventListener('input', e => { const el = e.target, h = el.dataset &&
 document.addEventListener('change', e => { const el = e.target, h = el.dataset && el.dataset.ch; if (h && CH[h]) CH[h](el, e); });
 $('#sheetBack').addEventListener('click', e => { if (e.target.id === 'sheetBack') closeSheet(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && ui.sheet) closeSheet(); });
+document.addEventListener('keydown', e => { const a = e.key === 'Enter' && e.target && { bcCode: 'bcFind', wAdd: 'waterAdd', glassIn: 'glassSave' }[e.target.id]; if (a) { e.preventDefault(); A[a](e.target, e); } });
 
 /* ================= Связь с Android ================= */
 window.appBack = () => {
-  if (ui.sheet) { closeSheet(); return true; }
+  if (ui.sheet) { if (ui.sheet === 'barcode') A.bcBack(); else if (ui.sheet === 'dish' && ui.dish && ui.dish.from === 'add') A.dishBack(); else closeSheet(); return true; }
   if (ui.confirm) { ui.confirm = null; render(); return true; }
   if (ui.editProg) { A.progDone(); return true; }
   if (MODE === 'coach' && !CO.cur) return false;
