@@ -76,6 +76,8 @@ const ACTS = [['1.2', 'Мало движения, без тренировок'],
 const GOALS = [['lose', 'Снизить вес'], ['keep', 'Поддерживать вес'], ['gain', 'Набрать мышцы']];
 const MEAS = [['waist', 'Талия'], ['hips', 'Бёдра'], ['chest', 'Грудь'], ['thigh', 'Бедро'], ['arm', 'Рука (бицепс)']];
 const PERIODS = [[7, 'Неделя'], [30, 'Месяц'], [91, '3 месяца'], [365, 'Год']];
+// упражнения из нескольких файлов: собрать по группам в порядке EX_GROUPS (сортировка устойчивая)
+(() => { const order = EX_GROUPS.map(g => g[0]); EXERCISES.sort((a, b) => order.indexOf(a.g) - order.indexOf(b.g)); })();
 const EXM = new Map(EXERCISES.map(e => [e.id, e]));
 const GROUP = Object.fromEntries(EX_GROUPS);
 const NET_MET = 3.5;          // ккал на кг в час сверх обмена для силовой тренировки
