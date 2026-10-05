@@ -60,7 +60,7 @@ const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return 
 const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); return true; } catch (e) { return false; } };
 const lsJson = k => { try { return JSON.parse(lsGet(k) || 'null'); } catch (e) { return null; } };
 let MODE = lsGet('tarelka-mode') === 'coach' ? 'coach' : 'client';
-const CO = { user: null, authChecked: false, ready: false, clients: [], cur: null, ai: { key: '', model: '' }, unsub: null, err: '', info: '', aiMsg: '', aiOk: null, busy: false, confirm: null, autoOpened: false };
+const CO = { user: null, authChecked: false, ready: false, clients: [], cur: null, ai: { prov: 'yandex', key: '', folder: '', model: '' }, unsub: null, err: '', info: '', aiMsg: '', aiOk: null, busy: false, confirm: null, autoOpened: false };
 function storeKey() { return MODE === 'coach' && CO.cur ? KEY + '-c-' + CO.cur : KEY; }
 function loadState() { if (MODE === 'coach' && !CO.cur) return null; return lsJson(storeKey()); }
 function save(full) { if (S.demo) return; if (Sync.cid) Sync.touch(full); storageOk = lsSet(storeKey(), JSON.stringify(S)); }
@@ -1109,7 +1109,7 @@ const Sync = {
     const doc = snap.data() || {}, data = doc.d || {}, us = doc.u || {};
     let ch = false;
     if (this.role === 'client') {
-      const ai = doc.ai && doc.ai.key ? { key: doc.ai.key, model: doc.ai.model || '' } : null;
+      const ai = normAi(doc.ai);
       if (cj(ai) !== cj(S.ai || null)) { S.ai = ai; ch = true; }
       const me = FB.auth && FB.auth.currentUser;
       if (doc.ownerUid && me && doc.ownerUid !== me.uid) { this.status = 'lost'; this.err = 'Тренер выдал новый код — введите его в «Профиле».'; }
@@ -1176,10 +1176,10 @@ const Sync = {
 };
 
 /* ---------- Тренер ---------- */
-const AI_MODELS = [['qwen/qwen3-vl-235b-a22b-instruct', 'Qwen3 VL — рекомендую'], ['qwen/qwen3-vl-30b-a3b-instruct', 'Qwen3 VL 30B — дешевле, чуть менее точно'],
-  ['google/gemini-2.5-flash', 'Gemini 2.5 Flash — не работает в России'], ['anthropic/claude-haiku-4.5', 'Claude Haiku 4.5 — не работает в России']];
-const DEFAULT_MODEL = AI_MODELS[0][0], FALLBACK_MODEL = DEFAULT_MODEL;
-const modelName = m => { const x = AI_MODELS.find(a => a[0] === m); return x ? x[1].split(' — ')[0] : m; };
+const YA_MODEL = 'qwen3.6-35b-a3b', YA_URL = 'https://llm.api.cloud.yandex.net/v1/chat/completions';
+const DEFAULT_MODEL = YA_MODEL;
+function normAi(x) { if (!x || !x.key) return null; return { prov: x.prov || (/^sk-or-/.test(x.key) ? 'openrouter' : 'yandex'), key: x.key, folder: x.folder || '', model: x.model && !/\//.test(x.model) ? x.model : YA_MODEL }; }
+const AI_EMPTY = () => ({ prov: 'yandex', key: '', folder: '', model: YA_MODEL });
 const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function genCode() { const a = new Uint32Array(6); crypto.getRandomValues(a); let s = ''; a.forEach(x => { s += CODE_ABC[x % CODE_ABC.length]; }); return s; }
 function ago(ts) {
@@ -1200,7 +1200,7 @@ const Coach = {
     const uid = CO.user.uid;
     FB.db.collection('coaches').doc(uid).get().then(d => {
       const ai = (d.exists && d.data().ai) || {};
-      CO.ai = { key: ai.key || '', model: ai.model || DEFAULT_MODEL };
+      CO.ai = normAi(ai) || AI_EMPTY();
       if (!CO.cur) render();
     }).catch(() => { });
     if (CO.unsub) CO.unsub();
@@ -1225,7 +1225,7 @@ const Coach = {
   async addClient(name) {
     const ref = FB.db.collection('clients').doc();
     await ref.set({ coachUid: CO.user.uid, ownerUid: null, name, invite: '', createdAt: Date.now(), seen: 0, d: {}, u: {},
-      ai: CO.ai.key ? { key: CO.ai.key, model: CO.ai.model || DEFAULT_MODEL } : null });
+      ai: CO.ai.key && CO.ai.prov === 'yandex' ? { prov: 'yandex', key: CO.ai.key, folder: CO.ai.folder, model: CO.ai.model || YA_MODEL } : null });
     const code = await Coach.newInvite(ref.id);
     await ref.update({ invite: code });
     return code;
@@ -1243,10 +1243,11 @@ const Coach = {
     if (c && c.invite) FB.db.collection('invites').doc(c.invite).delete().catch(() => { });
     lsSet(KEY + '-c-' + cid, null);
   },
-  async saveAi(key, model) {
-    CO.ai = { key, model };
-    await FB.db.collection('coaches').doc(CO.user.uid).set({ ai: { key, model } }, { merge: true });
-    await Promise.all(CO.clients.map(c => FB.db.collection('clients').doc(c.id).update({ ai: key ? { key, model } : null })));
+  async saveAi(key, folder) {
+    const ai = { prov: 'yandex', key, folder, model: YA_MODEL };
+    CO.ai = ai;
+    await FB.db.collection('coaches').doc(CO.user.uid).set({ ai }, { merge: true });
+    await Promise.all(CO.clients.map(c => FB.db.collection('clients').doc(c.id).update({ ai: key ? ai : null })));
   },
   open(cid) {
     Sync.stop(); CO.cur = cid; lsSet('tarelka-coach-cur', cid);
@@ -1287,20 +1288,25 @@ function renderCoach() {
     ${CO.confirm === 'del:' + c.id ? `<div class="confirm"><p>Удалить карточку «${esc(c.name)}»? У тренера пропадёт доступ к её дневнику, у неё на телефоне записи останутся.</p><div class="row"><button class="btn btn-warn btn-sm" data-a="coDelYes" data-id="${c.id}">Удалить</button><button class="btn-link" data-a="coNo">Отмена</button></div></div>`
       : CO.confirm === 'code:' + c.id ? `<div class="confirm"><p>Выдать новый код? Старый перестанет работать, а телефон подопечной отключится, пока она не введёт новый.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="coNewCodeYes" data-id="${c.id}">Выдать код</button><button class="btn-link" data-a="coNo">Отмена</button></div></div>`
       : `<div class="row"><button class="btn-link" data-a="coNewCode" data-id="${c.id}">Новый код</button><button class="btn-link warn-text" data-a="coDel" data-id="${c.id}">Удалить</button></div>`}</section>`).join('');
-  const curModel = (lsJson('tarelka-ai-blocked') || []).includes(CO.ai.model) ? FALLBACK_MODEL : (CO.ai.model || DEFAULT_MODEL);
-  const aiOpts = AI_MODELS.map(([v, l]) => `<option value="${v}" ${curModel === v ? 'selected' : ''}>${esc(l)}</option>`).join('');
+  const aiOld = CO.ai.key && CO.ai.prov !== 'yandex';
   return `<header class="hd"><h1>Мои подопечные</h1></header>
     ${CO.err ? `<div class="banner plain"><p>${esc(CO.err)}</p></div>` : ''}
     ${!CO.ready ? '<p class="muted">Загружаю список…</p>' : list || '<p class="muted">Пока никого нет. Добавьте первую подопечную.</p>'}
     <section class="card"><h2>Новая подопечная</h2><div class="row"><input id="coNewName" class="input grow" placeholder="Имя" autocomplete="off"><button class="btn btn-primary" data-a="coAdd" ${CO.busy ? 'disabled' : ''}>Добавить</button></div>
       <p class="hint">Появится код из 6 символов. Отправьте его подопечной.</p></section>
     <section class="card"><h2>Распознавание еды (ИИ)</h2>
-      <p class="small muted">${CO.ai.key ? 'Ключ сохранён: …' + esc(CO.ai.key.slice(-4)) : 'Ключ не добавлен — фото и свободный текст распознаваться не будут.'}</p>
-      <div class="field"><label for="aiKey">Ключ OpenRouter</label><input id="aiKey" class="input" type="password" autocomplete="off" placeholder="${CO.ai.key ? 'Оставьте пустым, чтобы не менять' : 'sk-or-v1-…'}"></div>
-      <div class="field"><label for="aiModel">Модель</label><select id="aiModel" class="input">${aiOpts}</select></div>
+      <p class="small muted">Работает через Яндекс AI Studio, модель Qwen3.6. ${aiOld ? 'Сохранён старый ключ OpenRouter — в России он больше не работает, вставьте ключ Яндекса.' : CO.ai.key ? 'Ключ сохранён: …' + esc(CO.ai.key.slice(-4)) : 'Ключ не добавлен — фото и свободный текст распознаваться не будут.'}</p>
+      <div class="field"><label for="aiKey">API-ключ Яндекса</label><input id="aiKey" class="input" type="password" autocomplete="off" placeholder="${CO.ai.key && !aiOld ? 'Оставьте пустым, чтобы не менять' : 'AQVN…'}"></div>
+      <div class="field"><label for="aiFolder">ID каталога</label><input id="aiFolder" class="input" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="b1g…" value="${esc(CO.ai.folder || '')}"></div>
       <div class="row"><button class="btn btn-primary grow" data-a="coSaveAi" ${CO.busy ? 'disabled' : ''}>Сохранить</button>${CO.ai.key ? `<button class="btn btn-ghost" data-a="coTestAi">Проверить</button><button class="btn btn-warn" data-a="coDelAi">Удалить</button>` : ''}</div>
       ${CO.aiMsg ? `<p class="small ${CO.aiOk === false ? 'warn-text' : ''}" role="status">${esc(CO.aiMsg)}</p>` : ''}
-      <p class="hint">Ключ хранится в вашей базе Firebase и передаётся в приложения подопечных. Поставьте на него месячный лимит в OpenRouter.</p></section>
+      <details class="howto"><summary>Как получить ключ и ID каталога</summary><ol>
+        <li>Зайдите на aistudio.yandex.ru с Яндекс ID, создайте облако и привяжите платёжный аккаунт (карта РФ). Новым пользователям дают стартовый грант.</li>
+        <li>В консоли Яндекс Облака скопируйте ID каталога default — строка вида b1g…</li>
+        <li>В каталоге: «Сервисные аккаунты» → «Создать», роль <b>ai.languageModels.user</b>.</li>
+        <li>Откройте аккаунт → «Создать новый ключ» → «API-ключ», область действия <b>yc.ai.languageModels.execute</b>. Скопируйте секрет — он показывается один раз.</li>
+        <li>Вставьте ключ и ID каталога сюда и нажмите «Сохранить».</li></ol></details>
+      <p class="hint">Ключ хранится в вашей базе Firebase и передаётся в приложения подопечных. Расходы видны в разделе «Биллинг» Яндекс Облака.</p></section>
     <button class="btn btn-ghost" data-a="coLogout">Выйти из аккаунта тренера</button>
     <p class="small muted">Вы вошли как ${esc(CO.user.email || '')}</p>${back}`;
 }
@@ -1319,7 +1325,7 @@ function linkCard() {
 }
 
 /* ---------- ИИ: распознавание еды ---------- */
-function aiCfg() { const c = MODE === 'coach' ? CO.ai : S.ai; return c && c.key ? { key: c.key, model: c.model || DEFAULT_MODEL } : null; }
+function aiCfg() { return normAi(MODE === 'coach' ? CO.ai : S.ai); }
 const httpCbs = {};
 window.__httpDone = (id, code, text) => { const cb = httpCbs[id]; if (cb) { delete httpCbs[id]; cb({ code, text }); } };
 function httpPost(url, headers, body) {
@@ -1339,40 +1345,51 @@ async function aiRecognize(text, image) {
   if (text) content.push({ type: 'text', text: (image ? 'Подсказка: ' : 'Что съедено: ') + text });
   if (image) content.push({ type: 'image_url', image_url: { url: image } });
   if (!image) content.push({ type: 'text', text: 'Если масса не указана, оцени обычную порцию.' });
-  const blocked = lsJson('tarelka-ai-blocked') || [];
-  let model = blocked.includes(cfg.model) ? FALLBACK_MODEL : cfg.model;
-  let r = await aiCall(cfg.key, model, content);
-  if (aiRegion(r) && model !== FALLBACK_MODEL) {
-    lsSet('tarelka-ai-blocked', JSON.stringify(blocked.concat([model])));
-    model = FALLBACK_MODEL; r = await aiCall(cfg.key, model, content);
-  }
+  if (cfg.prov !== 'yandex') throw new Error('OpenRouter больше не работает в России. Тренеру нужно подключить Яндекс AI Studio в режиме тренера → «Распознавание еды».');
+  if (!cfg.folder) throw new Error('Не указан ID каталога Яндекса. Тренеру нужно дописать его в настройках ИИ.');
+  const r = await yaCall(cfg, content);
   const em = aiErrText(r);
-  if (r.code === 401) throw new Error('OpenRouter не принял ключ: он неверный, удалён или отключён. Тренеру нужно вставить действующий ключ.' + (em ? ' (' + em + ')' : ''));
-  if (r.code === 402) throw new Error('На балансе OpenRouter закончились деньги или исчерпан лимит ключа.');
-  if (aiRegion(r)) throw new Error('Модель ИИ недоступна в вашей стране. Тренеру: в настройках ИИ выберите Qwen3 VL.');
+  if (r.code === 401) throw new Error('Яндекс не принял ключ. Проверьте, что это API-ключ сервисного аккаунта с областью yc.ai.languageModels.execute.' + (em ? ' (' + em + ')' : ''));
+  if (r.code === 403) throw new Error('Нет доступа: у сервисного аккаунта нет роли ai.languageModels.user или неверный ID каталога.' + (em ? ' (' + em + ')' : ''));
+  if (r.code === 402 || /billing|payment|баланс|платёж/i.test(em)) throw new Error('В Яндекс Облаке не активен платёжный аккаунт или закончились деньги.' + (em ? ' (' + em + ')' : ''));
   if (r.code === 429) throw new Error('Слишком много запросов. Попробуйте через минуту.');
-  if (r.code < 0) throw new Error('Нет связи с сервисом ИИ. Проверьте интернет.');
+  if (r.code < 0) throw new Error('Нет связи с сервисом ИИ. Проверьте интернет.' + (r.text && r.text !== 'timeout' ? ' (' + String(r.text).slice(0, 80) + ')' : ''));
   if (r.code < 200 || r.code >= 300 || em) throw new Error('Сервис ИИ ответил ошибкой' + (r.code >= 300 ? ' (' + r.code + ')' : '') + (em ? ': ' + em : '') + '. Попробуйте ещё раз.');
   let msg = '';
   try { const j = JSON.parse(r.text); msg = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || ''; } catch (e) { msg = ''; }
   if (Array.isArray(msg)) msg = msg.map(x => x.text || '').join('');
-  const m = String(msg).match(/\{[\s\S]*\}/);
+  const m = String(msg).replace(/<think>[\s\S]*?<\/think>/g, '').match(/\{[\s\S]*\}/);
   let data = null; try { data = m ? JSON.parse(m[0]) : null; } catch (e) { data = null; }
   if (!data || !Array.isArray(data.items)) throw new Error('ИИ ответил непонятно. Попробуйте ещё раз или напишите текстом.');
   const items = data.items.map(it => ({ name: String(it.name || '').trim().slice(0, 60), grams: Math.round(toNum(it.grams) || 0), kcal: toNum(it.kcal) || 0, p: toNum(it.p) || 0, f: toNum(it.f) || 0, c: toNum(it.c) || 0 }))
     .filter(it => it.name && it.grams > 0 && it.kcal >= 0 && it.kcal < 5000);
-  return { items, comment: String(data.comment || '').slice(0, 200), model };
+  return { items, comment: String(data.comment || '').slice(0, 200) };
 }
-function aiCall(key, model, content) {
-  const body = JSON.stringify({ model, temperature: 0.2, max_tokens: 1500, response_format: { type: 'json_object' },
-    messages: [{ role: 'system', content: AI_PROMPT }, { role: 'user', content }] });
-  return httpPost('https://openrouter.ai/api/v1/chat/completions',
-    { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/garenaalex322-dotcom/juliya', 'X-Title': 'Tarelka i shtanga' }, body);
+async function yaCall(cfg, content) {
+  const send = (auth, suf) => httpPost(YA_URL,
+    { 'Authorization': auth + ' ' + cfg.key, 'Content-Type': 'application/json', 'OpenAI-Project': cfg.folder, 'x-folder-id': cfg.folder, 'x-data-logging-enabled': 'false' },
+    JSON.stringify({ model: 'gpt://' + cfg.folder + '/' + cfg.model + suf, temperature: 0.2, max_tokens: 4000, messages: [{ role: 'system', content: AI_PROMPT }, { role: 'user', content }] }));
+  const known = lsJson('tarelka-ya-mode');
+  if (known && known.k === cfg.key.slice(-6)) { const r = await send(known.a, known.s); if (r.code !== 401 && r.code !== 404) return r; }
+  let first = null, best = null;
+  for (const [a, sfx] of [['Api-Key', ''], ['Bearer', ''], ['Api-Key', '/latest'], ['Bearer', '/latest']]) {
+    const r = await send(a, sfx); if (!first) first = r;
+    if (r.code >= 200 && r.code < 300) { lsSet('tarelka-ya-mode', JSON.stringify({ k: cfg.key.slice(-6), a, s: sfx })); return r; }
+    const retry = r.code === 401 || r.code === 403 || r.code === 404 || (r.code === 400 && /model|uri/i.test(aiErrText(r)));
+    if (!retry) return r;
+    if (r.code !== 401 && !best) best = r;
+  }
+  return best || first;
 }
 function aiErrText(r) {
-  try { const j = JSON.parse(r.text), e = j && j.error; if (!e) return ''; return String(e.message || e.code || 'ошибка').slice(0, 160); } catch (x) { return r.code >= 300 ? String(r.text || '').slice(0, 120) : ''; }
+  let j = null; try { j = JSON.parse(r.text); } catch (x) { return r.code >= 300 ? String(r.text || '').replace(/<[^>]+>/g, ' ').trim().slice(0, 120) : ''; }
+  if (!j || typeof j !== 'object') return '';
+  const e = j.error;
+  if (typeof e === 'string') return e.slice(0, 160);
+  if (e && typeof e === 'object') return String(e.message || e.code || 'ошибка').slice(0, 160);
+  if (r.code >= 300 && j.message) return String(j.message).slice(0, 160);
+  return '';
 }
-const aiRegion = r => (r.code === 403 || r.code === 404 || r.code === 451) && /region|country|location|not available|no endpoints|unsupported/i.test(aiErrText(r));
 function aiFood(it) {
   const g = it.grams, per = v => Math.round(Math.max(0, v) / g * 1000) / 10;
   return { id: 'ai' + uid(), name: it.name, kcal: per(it.kcal), p: per(it.p), f: per(it.f), c: per(it.c), portion: g, piece: 0, ai: true };
@@ -1714,10 +1731,13 @@ const A = {
   async coDelYes(b) { CO.confirm = null; try { await Coach.remove(b.dataset.id); toast('Карточка удалена'); } catch (e) { toast(fbErr(e)); } render(); },
   coNo() { CO.confirm = null; render(); },
   async coSaveAi() {
-    const key = ($('#aiKey').value || '').trim() || CO.ai.key, model = $('#aiModel').value || DEFAULT_MODEL;
-    if (key && !/^sk-or-/.test(key)) { toast('Ключ OpenRouter начинается с «sk-or-». Проверьте, что скопировали его целиком.'); return; }
+    const typed = ($('#aiKey').value || '').trim().replace(/\s+/g, ''), folder = ($('#aiFolder').value || '').trim();
+    const key = typed || (CO.ai.prov === 'yandex' ? CO.ai.key : '');
+    if (/^sk-or-/.test(key)) { toast('Это ключ OpenRouter — в России он больше не работает. Нужен API-ключ Яндекса.'); return; }
+    if (!key) { toast('Вставьте API-ключ Яндекса'); return; }
+    if (!/^[a-z0-9]{10,30}$/i.test(folder)) { toast('Впишите ID каталога — строка вида b1g… из консоли Яндекс Облака'); return; }
     CO.busy = true; render();
-    try { await Coach.saveAi(key, model); toast(key ? 'Ключ сохранён и отправлен подопечным' : 'Сохранено'); } catch (e) { toast(fbErr(e)); CO.busy = false; render(); return; }
+    try { await Coach.saveAi(key, folder); toast('Ключ сохранён и отправлен подопечным'); } catch (e) { toast(fbErr(e)); CO.busy = false; render(); return; }
     CO.busy = false; render();
     if (key) A.coTestAi();
   },
@@ -1726,11 +1746,11 @@ const A = {
     CO.aiMsg = 'Проверяю ключ…'; CO.aiOk = null; render();
     try {
       const r = await aiRecognize('яблоко 100 г', null);
-      CO.aiOk = true; CO.aiMsg = 'Ключ работает: ИИ распознал «' + ((r.items[0] && r.items[0].name) || 'яблоко') + '».' + (r.model !== CO.ai.model ? ' Выбранная модель недоступна, поэтому используется ' + modelName(r.model) + '.' : '');
+      CO.aiOk = true; CO.aiMsg = 'Ключ работает: ИИ распознал «' + ((r.items[0] && r.items[0].name) || 'яблоко') + '».';
     } catch (e) { CO.aiOk = false; CO.aiMsg = e.message || String(e); }
     render();
   },
-  async coDelAi() { CO.busy = true; render(); try { await Coach.saveAi('', CO.ai.model || DEFAULT_MODEL); toast('Ключ удалён'); } catch (e) { toast(fbErr(e)); } CO.busy = false; render(); },
+  async coDelAi() { CO.busy = true; render(); try { await Coach.saveAi('', CO.ai.folder || ''); toast('Ключ удалён'); } catch (e) { toast(fbErr(e)); } CO.busy = false; render(); },
   coLogout() { Coach.logout(); },
   coachBack() { Coach.close(); },
   aiPhoto() { const i = $('#photoIn'); if (i) i.click(); },
