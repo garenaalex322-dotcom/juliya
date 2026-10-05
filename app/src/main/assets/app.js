@@ -100,7 +100,7 @@ function progFromTemplate(t) {
 function blankProfile() { return { name: '', sex: 'f', age: '', height: '', weight: '', act: '1.375', goal: 'lose', manual: false, mk: '', mp: '', mf: '', mc: '', water: '', stepGoal: '8000', rest: '90' }; }
 function blankState() {
   return { v: 2, demo: false, profile: blankProfile(), days: {}, weights: [], measures: [], program: progFromTemplate(PROGRAM_TEMPLATES[0]),
-    workouts: [], session: null, custom: [], recent: [], customEx: [] };
+    workouts: [], session: null, custom: [], recent: [], customEx: [], notes: {} };
 }
 function entryFrom(food, grams, meal) { return { id: uid(), meal, name: food.name, key: food.id, grams: Math.round(grams), k100: food.kcal, p100: food.p, f100: food.f, c100: food.c }; }
 function itemVals(it) {
@@ -133,6 +133,7 @@ function migrate(s) {
   }
   ['weights', 'measures', 'workouts', 'custom', 'recent', 'customEx'].forEach(k => { if (!Array.isArray(out[k])) out[k] = []; });
   if (!out.days || typeof out.days !== 'object') out.days = {};
+  if (!out.notes || typeof out.notes !== 'object' || Array.isArray(out.notes)) out.notes = {};
   if (!out.program || !Array.isArray(out.program.days)) out.program = progFromTemplate(PROGRAM_TEMPLATES[0]);
   out.weights.sort((a, b) => a.date.localeCompare(b.date));
   out.measures.sort((a, b) => a.date.localeCompare(b.date));
@@ -346,6 +347,7 @@ function renderToday() {
     <button class="icon-btn" data-a="dayNext" aria-label="Следующий день" ${k >= t ? 'disabled' : ''}>${IC.right}</button></header>
   ${demoBanner()}
   ${tg ? '' : `<div class="banner"><p>Укажите возраст, рост и вес, чтобы рассчитать дневную норму.</p><button class="btn btn-ghost btn-sm" data-a="tab" data-tab="profile">Указать</button></div>`}
+  ${notesBanner()}${noteCard()}
   <section class="card"><div class="plate">${plateSvg(tot, tg)}<div class="macros">
     ${macroRow('Белки', tot.p, tg && tg.p, 'prot')}${macroRow('Жиры', tot.f, tg && tg.f, 'fat')}${macroRow('Углеводы', tot.c, tg && tg.c, 'carb')}
   </div></div><p class="eaten-line">Съедено <b class="num">${f0(tot.kcal)}</b>${tg ? ` из <span class="num">${f0(tg.kcal)}</span>` : ''} ккал</p></section>
@@ -472,11 +474,11 @@ const waterHist = k => { ui.wHist = ui.wHist || {}; return ui.wHist[k] || (ui.wH
 const nn = v => Math.max(0, r1(toNum(v) || 0));
 
 /* ================= ТРЕНИРОВКИ ================= */
-function lastFor(exId, name, beforeId) {
+function lastFor(exId, name, beforeId, until) {
   const list = S.workouts.slice().sort((a, b) => b.date.localeCompare(a.date));
   for (const w of list) {
-    if (w.id === beforeId) continue;
-    const e = w.ex.find(x => (exId && x.exId === exId) || (!exId && x.name === name));
+    if (w.id === beforeId || (until && w.date > until)) continue;
+    const e = w.ex.find(x => (exId && x.exId === exId) || ((!exId || !x.exId) && x.name === name));
     if (e && e.sets.some(s => s.done)) return { date: w.date, sets: e.sets.filter(s => s.done) };
   }
   return null;
@@ -514,9 +516,9 @@ function setRow(i, j, s, kind, pe) {
 function sessionCard() {
   const s = S.session, el = Math.max(0, Math.round((Date.now() - (s.start || Date.now())) / 60000));
   const ex = s.ex.map((e, i) => {
-    const kind = kindOf(e.exId), last = lastFor(e.exId, e.name, null), pe = { reps: e.reps || '' };
+    const kind = kindOf(e.exId), pe = { reps: e.reps || '' };
     return `<div class="sx"><div class="sx-hd"><button class="ex-name" data-a="exInfo" data-id="${esc(e.exId || '')}" data-from="session">${esc(e.name)}<small>${esc(e.target || '')}</small></button><button class="x-btn" data-a="sxRemove" data-i="${i}" aria-label="Убрать упражнение из тренировки">${IC.x}</button></div>
-      ${last ? `<p class="sx-prev">В прошлый раз, ${fmtDM(last.date)}: ${esc(setsText(last.sets, kind))}</p>` : ''}
+      ${progHint(e, kind, s.date)}
       ${e.sets.map((st, j) => setRow(i, j, st, kind, pe)).join('')}
       <div class="row"><button class="btn-link" data-a="setAdd" data-i="${i}">+ подход</button>${e.sets.length > 1 ? `<button class="btn-link" data-a="setDel" data-i="${i}">− подход</button>` : ''}</div></div>`;
   }).join('');
@@ -568,7 +570,7 @@ function renderTrain() {
   const hist = S.workouts.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 15);
   h += `<section class="card"><div class="sec-head"><h2>История</h2>${S.workouts.length ? `<span class="muted small">всего ${S.workouts.length}</span>` : ''}</div>${hist.length ? `<div>${hist.map(w => {
     const dn = w.ex.reduce((s, e) => s + e.sets.filter(x => x.done).length, 0);
-    return `<button class="hist" data-a="openWorkout" data-id="${w.id}"><span><b>${esc(w.dayName)}</b><span class="small muted" style="display:block">${fmtS(w.date)} · ${f0(w.minutes || 60)} мин${w.author === 'coach' ? ' · записал тренер' : ''}${w.note ? ' · ' + esc(w.note) : ''}</span></span><span class="pill">${dn} ${plural(dn, 'подход', 'подхода', 'подходов')}</span></button>`;
+    return `<button class="hist" data-a="openWorkout" data-id="${w.id}"><span><b>${esc(w.dayName)}</b><span class="small muted" style="display:block">${fmtS(w.date)} · ${f0(w.minutes || 60)} мин${w.author === 'coach' ? ' · записал тренер' : ''}${w.note ? ' · ' + esc(w.note) : ''}${noteOf('w:' + w.id) ? ` · <span class="note-mark">${IC.msg}комментарий тренера</span>` : ''}</span></span><span class="pill">${dn} ${plural(dn, 'подход', 'подхода', 'подходов')}</span></button>`;
   }).join('')}</div>` : `<p class="muted small">Здесь появятся завершённые тренировки.</p>`}</section>`;
   return h;
 }
@@ -578,7 +580,8 @@ function sheetWorkout() {
   return `${sheetHead(w.dayName + ', ' + fmtD(w.date))}
     <div class="stats three"><div class="stat"><b>${f0(w.minutes || 60)}</b><span>минут</span></div><div class="stat"><b>${w.ex.length}</b><span>${plural(w.ex.length, 'упражнение', 'упражнения', 'упражнений')}</span></div><div class="stat"><b>≈${f0(woKcal(w, kg))}</b><span>ккал</span></div></div>
     <div>${w.ex.map(e => `<div class="ex"><button class="ex-name" data-a="exInfo" data-id="${esc(e.exId || '')}">${esc(e.name)}</button><span class="scheme">${esc(setsText(e.sets, kindOf(e.exId)))}</span></div>`).join('')}</div>
-    ${w.note ? `<p class="tipbox">${esc(w.note)}</p>` : ''}
+    ${w.note ? `<p class="tipbox"><b>Заметка:</b> ${esc(w.note)}</p>` : ''}
+    ${woNoteHtml(w)}
     <div class="field"><label for="woMin">Длительность, минут</label><input id="woMin" class="input num" inputmode="numeric" value="${esc(w.minutes || 60)}"></div>
     <div class="row"><button class="btn btn-primary grow" data-a="woSave">Сохранить</button><button class="btn btn-warn" data-a="woDelete">Удалить</button></div>`;
 }
@@ -805,6 +808,8 @@ function renderProgress() {
     ${m1 ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th></th><th>Старт</th><th>Сейчас</th><th>Разница</th></tr></thead><tbody>${MEAS.map(([k, l]) => { const a = m0[k], b = m1[k]; const ok = a != null && a !== '' && b != null && b !== ''; const dv = ok ? b - a : 0; return `<tr><td>${l}</td><td>${a != null && a !== '' ? f1(a) : '—'}</td><td>${b != null && b !== '' ? f1(b) : '—'}</td><td class="${dv < 0 ? 'down' : dv > 0 ? 'up' : ''}">${ok && ms.length > 1 ? sgn(dv) : '—'}</td></tr>`; }).join('')}</tbody></table></div>
     <div class="chips scroll">${MEAS.map(([k, l]) => `<button class="chip" data-a="meas" data-v="${k}" aria-pressed="${ui.meas === k}">${esc(l.replace(' (бицепс)', ''))}</button>`).join('')}</div>
     ${lineChart('m', mPts, { from, to: t, aria: 'График замера: ' + mLab, empty: 'За этот период меньше двух замеров.' })}` : `<p class="muted small">Замеры показывают прогресс, даже когда вес стоит на месте. Делайте их раз в 2–4 недели.</p>`}</section>`;
+  // фото прогресса
+  h += photoSection();
   // питание
   const pAvg = k => logged.length ? logged.reduce((s, r) => s + dayTotals(S.days[r.k])[k], 0) / logged.length : 0;
   h += `<section class="card"><div class="sec-head"><h2>Питание</h2><span class="muted small">${logged.length} ${plural(logged.length, 'день', 'дня', 'дней')} с записями</span></div>
@@ -845,6 +850,7 @@ function renderProgress() {
     if (d && d.water) parts.push('вода ' + f1(d.water / 1000) + ' л');
     wo.forEach(w => parts.push(w.dayName + ', ' + f0(w.minutes || 60) + ' мин'));
     if (wt) parts.push('вес ' + f1(wt.kg) + ' кг');
+    if (noteOf(k)) parts.push('комментарий тренера');
     return parts.length ? `<button class="jr" data-a="gotoDay" data-k="${k}"><b class="num">${fmtS(k)}</b><span>${esc(parts.join(' · '))}</span></button>` : '';
   }).filter(Boolean).slice(0, 60);
   h += `<section class="card"><h2>Дневник по дням</h2>${jr.length ? `<div>${jr.join('')}</div>` : `<p class="muted small">За этот период записей нет.</p>`}</section>`;
@@ -939,6 +945,7 @@ function renderProfile() {
     </div>
     ${NB && !coachMode ? `<p class="small muted">Подсчёт шагов: ${stepsStatus === 'ok' ? 'включён, телефон считает шаги сам.' : stepsStatus === 'none' ? 'в телефоне нет датчика шагов — вводите шаги вручную.' : 'нужно разрешение.'}</p>${stepsStatus === 'need' ? `<button class="btn btn-ghost" data-a="stepsAllow">Разрешить подсчёт шагов</button>` : stepsStatus === 'denied' ? `<button class="btn btn-ghost" data-a="stepsSettings">Открыть настройки приложения</button>` : ''}` : ''}
   </section>
+  ${coachMode ? '' : remCard()}
   <section class="card"><h2>Отчёт тренеру</h2><p class="small muted">Питание, расход, шаги, вода, тренировки с весами, вес и замеры.</p>
     ${segm('repDays', ui.repDays, [[7, '7 дней'], [14, '14 дней'], [30, '30 дней']], 'Период')}
     <label class="check"><input type="checkbox" data-ch="repDetail" ${ui.repDetail ? 'checked' : ''}><span>Добавить список всех продуктов</span></label>
@@ -1018,7 +1025,7 @@ function fbErr(e) {
 }
 
 /* ---------- Синхронизация дневника ---------- */
-const ROOT = ['profile', 'program', 'weights', 'measures', 'custom', 'customEx'];
+const ROOT = ['profile', 'program', 'weights', 'measures', 'custom', 'customEx', 'notes'];   // notes пишет только тренер
 function cj(v) {
   if (v === null || v === undefined) return 'null';
   if (typeof v !== 'object') return JSON.stringify(v);
@@ -1059,6 +1066,8 @@ const Sync = {
     this.unsubs.push(ref.onSnapshot(s => this.onRoot(s), onErr));
     this.unsubs.push(ref.collection('days').where('date', '>=', addDays(todayKey(), -400)).onSnapshot(s => this.onDays(s), onErr));
     this.unsubs.push(ref.collection('workouts').onSnapshot(s => this.onWorkouts(s), onErr));
+    const phs = this.phScope = phScope();
+    this.unsubs.push(ref.collection('photos').onSnapshot(s => PH.onSnap(s, cid, phs), () => { }));
   },
   stop() {
     this.unsubs.forEach(u => { try { u(); } catch (e) { /* уже отписано */ } });
@@ -1097,7 +1106,7 @@ const Sync = {
     const upd = {}, rk = [];
     ROOT.forEach(f => {
       const key = 'r:' + f, j = jroot(f), lu = S.u && S.u[f];
-      if (!dirty(key, j) || (coach && !lu)) return;
+      if (!dirty(key, j) || (coach && !lu) || (!coach && f === 'notes')) return;
       upd['d.' + f] = JSON.parse(j); upd['u.' + f] = lu || now; rk.push([key, j]);
     });
     if (rk.length) { upd.seen = now; track(rk, ref.update(upd)); }
@@ -1146,8 +1155,8 @@ const Sync = {
       if (!(f in data)) return;
       const key = 'r:' + f, j = cj(data[f]), ru = us[f] || 0, lu = (S.u && S.u[f]) || 0;
       if (j === jroot(f)) { this.shadow[key] = j; return; }
-      if (ru > lu) {
-        S[f] = f === 'profile' ? Object.assign(blankProfile(), data[f] || {}) : (data[f] == null ? (f === 'program' ? S[f] : []) : data[f]);
+      if (ru > lu || (f === 'notes' && this.role === 'client')) {
+        S[f] = f === 'profile' ? Object.assign(blankProfile(), data[f] || {}) : (data[f] == null ? (f === 'program' ? S[f] : f === 'notes' ? {} : []) : data[f]);
         S.u = S.u || {}; S.u[f] = ru; this.shadow[key] = j; this.last[key] = jroot(f); ch = true;
       }
     });
@@ -1196,6 +1205,7 @@ const Sync = {
     if (!wasReady && this.got.root && this.got.days && this.got.wo) {
       this.ready = true; if (this.status !== 'lost') this.status = 'ok';
       if (this.role === 'client') this.ref().update({ seen: Date.now() }).catch(() => { });
+      PH.flush();
     }
     if (this.ready) this.schedule(wasReady ? 1500 : 300);
     if (ch || !wasReady) refreshAfterSync(); else refreshSyncLine();
@@ -1258,7 +1268,7 @@ const Coach = {
     const c = CO.clients.find(x => x.id === cid);
     await FB.db.collection('clients').doc(cid).delete();
     if (c && c.invite) FB.db.collection('invites').doc(c.invite).delete().catch(() => { });
-    lsSet(KEY + '-c-' + cid, null);
+    lsSet(KEY + '-c-' + cid, null); PH.clear('c-' + cid);
   },
   open(cid) {
     Sync.stop(); CO.cur = cid; lsSet('tarelka-coach-cur', cid);
@@ -1525,15 +1535,17 @@ function openSheet(kind) { ui.sheet = kind; renderSheet(); const sh = $('#sheet'
 function renderSheet() {
   const back = $('#sheetBack'), sh = $('#sheet');
   stopAnim();
+  sh.classList.toggle('full', ui.sheet === 'photo' || ui.sheet === 'phCmp');
   if (!ui.sheet) { back.hidden = true; sh.innerHTML = ''; document.body.style.overflow = ''; return; }
   back.hidden = false; document.body.style.overflow = 'hidden';
   sh.innerHTML = (SHEETS[ui.sheet] || (() => ''))();
+  if (ui.sheet === 'photo' || ui.sheet === 'phCmp') phFill(sh);
   if (ui.sheet === 'add') { renderPreview(); renderSearch(); }
   if (ui.sheet === 'dish') renderDishSearch();
   if (ui.sheet === 'ex') { animPaused = false; startAnim(); }
   if (ui.sheet === 'pick') drawThumbs(sh);
 }
-function closeSheet() { const was = ui.sheet; ui.sheet = null; ui.confirm = ui.confirm === 'progImport' ? null : ui.confirm; ui.tplId = null; ui.pickNew = false; renderSheet(); if (pendingRender || was === 'pick' || was === 'ex' || was === 'workout' || was === 'templates' || was === 'import') render(); }
+function closeSheet() { const was = ui.sheet; ui.sheet = null; ui.confirm = ui.confirm === 'progImport' || ui.confirm === 'phDel' ? null : ui.confirm; ui.tplId = null; ui.pickNew = false; if (was === 'phCmp') ui.phSel = null; if (was === 'phNew') ui.phNew = null; renderSheet(); if (pendingRender || was === 'pick' || was === 'ex' || was === 'workout' || was === 'templates' || was === 'import' || was === 'phCmp') render(); }
 
 /* ================= Действия ================= */
 const A = {
@@ -1718,14 +1730,14 @@ const A = {
         ex: s.ex.map(e => ({ exId: e.exId, name: e.name, target: e.target, sets: e.sets.filter(x => x.done).map(x => ({ w: x.w || '', r: x.r || '', done: true })) })).filter(e => e.sets.length) });
       S.session = null;
     });
-    stopRest(); ui.confirm = null; render(); window.scrollTo(0, 0); toast('Тренировка записана');
+    stopRest(); ui.confirm = null; render(); window.scrollTo(0, 0); toast('Тренировка записана'); remApply();
   },
   cancelSession() { ui.confirm = 'cancelSession'; render(); },
   cancelSessionYes() { mutate(() => { S.session = null; }); stopRest(); ui.confirm = null; render(); },
   restAdd() { if (rest) { rest.end += 30000; rest.total += 30; tickRest(); } },
   restSkip() { stopRest(); },
   openWorkout(b) { ui.woId = b.dataset.id; openSheet('workout'); },
-  woSave() { const id = ui.woId, m = toNum($('#woMin').value); mutate(() => { const w = S.workouts.find(x => x.id === id); if (w && m > 0) w.minutes = Math.round(m); }); ui.sheet = null; renderSheet(); render(); },
+  woSave() { const id = ui.woId, m = toNum($('#woMin').value), nt = $('#woNote'); mutate(() => { const w = S.workouts.find(x => x.id === id); if (w && m > 0) w.minutes = Math.round(m); if (w && nt && MODE === 'coach') putNote('w:' + id, nt.value); }); ui.sheet = null; renderSheet(); render(); },
   woDelete() {
     const id = ui.woId; let rem = null, idx = -1;
     mutate(() => { idx = S.workouts.findIndex(w => w.id === id); if (idx >= 0) rem = S.workouts.splice(idx, 1)[0]; });
@@ -1823,7 +1835,7 @@ const A = {
   restore() { const r = decodeCode($('#restoreTa').value, ['BAK1:']); if (!r || !r.data || typeof r.data !== 'object' || !r.data.days) { toast('Код не подходит. Скопируйте его целиком, начиная с BAK1:'); return; } ui.pendingRestore = r.data; ui.confirm = 'restore'; render(); },
   restoreYes() { const d = ui.pendingRestore; if (!d) return; d.demo = false; const link = S.link; S = migrate(d) || blankState(); S.link = link; Sync.last = {}; save(true); ui.pendingRestore = null; ui.confirm = null; ui.date = todayKey(); render(); toast('Записи восстановлены'); },
   wipe() { ui.confirm = 'wipe'; render(); },
-  wipeYes() { const linked = !!S.link; Sync.stop(); S = blankState(); save(); if (linked && FB.ok) FB.auth.signOut().catch(() => { }); ui.confirm = null; ui.report = ''; ui.backup = ''; ui.date = todayKey(); render(); toast('Все данные удалены'); },
+  wipeYes() { const linked = !!S.link; Sync.stop(); S = blankState(); save(); PH.clear('me'); if (linked && FB.ok) FB.auth.signOut().catch(() => { }); ui.confirm = null; ui.report = ''; ui.backup = ''; ui.date = todayKey(); render(); toast('Все данные удалены'); },
   hideLink() { lsSet('tarelka-hide-link', '1'); render(); },
   async linkCode() {
     const code = (($('#linkCode') || {}).value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -1938,6 +1950,429 @@ const CH = {
   exSel(el) { ui.exSel = el.value; render(); }
 };
 
+/* ================= Подсказка прогрессии, комментарии тренера, фото прогресса, напоминания ================= */
+IC.camera = IC.camera || sv('<path d="M4 8.5h3l1.6-2.5h6.8L17 8.5h3v10.5H4z"/><circle cx="12" cy="13.5" r="3.4"/>', 18);
+IC.msg = sv('<path d="M5 5h14a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5h-7.5L7 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V6.5A1.5 1.5 0 0 1 5 5z"/>', 18);
+
+/* ---------- Подсказка прогрессии в тренировке ---------- */
+const repNums = reps => (String(reps || '').match(/\d+/g) || []).map(Number).filter(n => n > 0);
+function nextWeight(w) {
+  if (w >= 20) return (Math.floor(w / 2.5 + 1e-6) + 1) * 2.5;   // штанга и тренажёры: +2,5 кг
+  if (w >= 10) return (Math.floor(w / 2 + 1e-6) + 1) * 2;       // гантели 10–20 кг идут через 2 кг
+  return Math.floor(w + 1e-6) + 1;                               // лёгкие гантели — через 1 кг
+}
+function progHint(e, kind, until) {
+  const last = lastFor(e.exId, e.name, null, until);
+  if (!last) {
+    const t = kind === 'w' ? 'Первый раз — подберите вес, при котором последние 2 повтора даются с трудом'
+      : kind === 'bw' ? 'Первый раз — сделайте столько повторов, сколько получается с хорошей техникой'
+      : kind === 't' ? 'Первый раз — держите, пока получается сохранять правильное положение' : '';
+    return t ? `<div class="sx-hint"><p class="sx-tip">${t}</p></div>` : '';
+  }
+  const sets = last.sets, rs = sets.map(s => toNum(s.r)).filter(n => n > 0);
+  let tip = '';
+  if (kind === 'w') {
+    const nums = repNums(e.reps), top = nums.length ? Math.max(...nums) : 12, lo = nums.length ? Math.min(...nums) : 10;
+    const w0 = Math.max(0, ...sets.map(s => toNum(s.w) || 0));
+    const wr = (w0 > 0 ? sets.filter(s => (toNum(s.w) || 0) === w0) : sets).map(s => toNum(s.r) || 0);
+    if (wr.some(r => r > 0)) {
+      const mn = Math.min(...wr), wt = f1(w0) + ' кг';
+      if (w0 <= 0) tip = mn >= top ? 'Все повторы сделаны — можно взять вес' : 'Добавьте повтор в подходе';
+      else if (mn >= top) tip = `Все повторы сделаны — попробуйте ${f1(nextWeight(w0))} кг`;
+      else if (mn < lo - 2 || wr[0] - mn >= Math.max(3, Math.round(top * 0.3))) tip = `Оставьте ${wt}: к концу повторы заметно падали`;
+      else tip = `Оставьте ${wt} и добавьте повтор`;
+    }
+  } else if (kind === 'bw') { if (rs.length) tip = 'Попробуйте добавить 1–2 повтора в подходе'; }
+  else if (kind === 't') { if (rs.length) { const b = Math.max(...rs); tip = `Попробуйте ${f0(b + 5)}–${f0(b + 10)} сек`; } }
+  else if (kind === 'c') { if (rs.length) tip = `Добавьте 2–5 минут или оставьте ${f0(rs.reduce((s, x) => s + x, 0))} мин`; }
+  return `<div class="sx-hint"><p class="sx-prev">В прошлый раз (${fmtDM(last.date)}): ${esc(setsText(sets, kind))}</p>${tip ? `<p class="sx-tip">${esc(tip)}</p>` : ''}</div>`;
+}
+
+/* ---------- Комментарии тренера: S.notes = { 'ГГГГ-ММ-ДД' | 'w:<id тренировки>': { t, ts } }, пишет только тренер ---------- */
+const NSEEN = 'tarelka-notes-seen';
+const noteOf = key => { const n = S.notes && S.notes[key]; return n && n.t ? n : null; };
+function putNote(key, text) {   // только внутри mutate()
+  const t = String(text || '').trim().slice(0, 2000);
+  S.notes = Object.assign({}, S.notes);
+  if (t) { if (!S.notes[key] || S.notes[key].t !== t) S.notes[key] = { t, ts: Date.now() }; } else delete S.notes[key];
+  if (ui.noteDraft) delete ui.noteDraft[key];
+}
+function noteWhen(ts) {
+  if (!ts) return ''; const d = new Date(ts), k = dkey(d), t = todayKey();
+  return (k === t ? 'сегодня' : k === addDays(t, -1) ? 'вчера' : fmtD(k)) + ', ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+function noteSeen(key, ts) { if (MODE === 'coach') return; const s = lsJson(NSEEN) || {}; if (s[key] !== ts) { s[key] = ts; lsSet(NSEEN, JSON.stringify(s)); } }
+const noteBox = (n, extra) => `<section class="card note-card"><div class="note-hd">${IC.msg}<h2>Комментарий тренера</h2><span class="small muted">${esc(noteWhen(n.ts))}</span></div><p class="note-text">${esc(n.t)}</p>${extra || ''}</section>`;
+function noteCard() {
+  const k = ui.date, n = noteOf(k);
+  if (MODE !== 'coach') { if (!n || S.demo) return ''; noteSeen(k, n.ts); return noteBox(n); }
+  if (n && ui.noteEdit !== k) return noteBox(n, `<div class="row"><button class="btn btn-ghost btn-sm" data-a="noteEdit">Изменить</button><button class="btn btn-warn btn-sm" data-a="noteDel">Удалить</button></div>`);
+  const d = ui.noteDraft && ui.noteDraft[k] != null ? ui.noteDraft[k] : (n ? n.t : '');
+  return `<section class="card"><div class="note-hd">${IC.msg}<h2 id="noteH">Комментарий тренера</h2></div>
+    <textarea id="noteTa" class="input" rows="2" data-in="noteDraft" data-k="${esc(k)}" maxlength="2000" aria-labelledby="noteH" placeholder="Подопечная увидит его в этот день: похвала, совет, задача">${esc(d)}</textarea>
+    <div class="row"><button class="btn btn-primary btn-sm" data-a="noteSave">Сохранить</button>${n ? `<button class="btn btn-ghost btn-sm" data-a="noteCancel">Отмена</button>` : ''}</div></section>`;
+}
+function notesBanner() {
+  if (MODE === 'coach' || S.demo || !S.notes) return '';
+  const seen = lsJson(NSEEN) || {}, since = Date.now() - 14 * 864e5;
+  const fresh = Object.keys(S.notes).filter(k => {
+    const n = noteOf(k); if (!n || n.ts < since || seen[k] === n.ts || k === ui.date) return false;
+    return k.startsWith('w:') ? S.workouts.some(w => w.id === k.slice(2)) : /^\d{4}-\d\d-\d\d$/.test(k);
+  }).sort((a, b) => S.notes[b].ts - S.notes[a].ts);
+  if (!fresh.length) return '';
+  const k = fresh[0], w = k.startsWith('w:') ? S.workouts.find(x => x.id === k.slice(2)) : null;
+  const what = w ? `к тренировке «${esc(w.dayName)}», ${fmtD(w.date)}` : k === addDays(todayKey(), -1) ? 'ко вчерашнему дню' : k === todayKey() ? 'к сегодняшнему дню' : 'к ' + fmtD(k);
+  return `<div class="banner plain note-banner"><p>Новый комментарий тренера ${what}${fresh.length > 1 ? ` и ещё ${fresh.length - 1}` : ''}.</p><button class="btn btn-primary btn-sm" data-a="noteGo" data-k="${esc(k)}">Открыть</button></div>`;
+}
+function woNoteHtml(w) {
+  const k = 'w:' + w.id, n = noteOf(k);
+  if (MODE === 'coach') {
+    const v = ui.noteDraft && ui.noteDraft[k] != null ? ui.noteDraft[k] : (n ? n.t : '');
+    return `<div class="field"><label for="woNote">Комментарий тренера</label><textarea id="woNote" class="input" rows="2" data-in="noteDraft" data-k="${esc(k)}" maxlength="2000" placeholder="Подопечная увидит его в истории тренировок">${esc(v)}</textarea><p class="hint">Сохранится кнопкой «Сохранить» ниже.</p></div>`;
+  }
+  if (!n) return '';
+  noteSeen(k, n.ts);
+  return `<div class="note-card note-in"><div class="note-hd">${IC.msg}<b>Комментарий тренера</b><span class="small muted">${esc(noteWhen(n.ts))}</span></div><p class="note-text">${esc(n.t)}</p></div>`;
+}
+
+/* ---------- Фото прогресса: IndexedDB 'tarelka-photos' (meta + img), облако clients/{cid}/photos/{id} ---------- */
+const PH_VIEWS = [['front', 'Спереди'], ['side', 'Сбоку'], ['back', 'Сзади']];
+const PH_MAX = 900, PH_Q = 0.72, PH_LIMIT = 250000;
+const phViewName = v => (PH_VIEWS.find(x => x[0] === v) || [0, ''])[1];
+const phOrder = m => { const i = PH_VIEWS.findIndex(x => x[0] === m.view); return i < 0 ? 9 : i; };
+const phScope = () => MODE === 'coach' ? (CO.cur ? 'c-' + CO.cur : null) : 'me';
+const phDateLong = k => fmtD(k) + (pk(k).getFullYear() !== new Date().getFullYear() ? ' ' + pk(k).getFullYear() : '');
+const phMem = { meta: new Map(), img: new Map() };   // если IndexedDB недоступна
+let phDbP = null;
+function phDb() {
+  if (!phDbP) phDbP = new Promise(res => {
+    try {
+      const rq = indexedDB.open('tarelka-photos', 1);
+      rq.onupgradeneeded = () => { const db = rq.result; if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'k' }).createIndex('scope', 'scope'); if (!db.objectStoreNames.contains('img')) db.createObjectStore('img', { keyPath: 'k' }); };
+      rq.onsuccess = () => res(rq.result); rq.onerror = () => res(null); rq.onblocked = () => res(null);
+    } catch (e) { res(null); }
+  });
+  return phDbP;
+}
+const phReq = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+const phDone = tx => new Promise((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); });
+async function phAll(scope) { const db = await phDb(); if (!db) return [...phMem.meta.values()].filter(m => m.scope === scope).map(m => Object.assign({}, m)); return phReq(db.transaction('meta').objectStore('meta').index('scope').getAll(scope)); }
+async function phGet(k) { const db = await phDb(); if (!db) { const m = phMem.meta.get(k); return m ? Object.assign({}, m) : null; } return (await phReq(db.transaction('meta').objectStore('meta').get(k))) || null; }
+async function phImg(k) { const db = await phDb(); if (!db) return (phMem.img.get(k) || {}).data || null; const r = await phReq(db.transaction('img').objectStore('img').get(k)); return r ? r.data : null; }
+async function phPut(m, data) {   // data: строка — записать, false — удалить картинку, undefined — не трогать
+  const db = await phDb();
+  if (!db) { phMem.meta.set(m.k, Object.assign({}, m)); if (typeof data === 'string') phMem.img.set(m.k, { k: m.k, data }); else if (data === false) phMem.img.delete(m.k); return; }
+  const tx = db.transaction(['meta', 'img'], 'readwrite'); tx.objectStore('meta').put(m);
+  if (typeof data === 'string') tx.objectStore('img').put({ k: m.k, data }); else if (data === false) tx.objectStore('img').delete(m.k);
+  return phDone(tx);
+}
+async function phDelRec(k) { const db = await phDb(); if (!db) { phMem.meta.delete(k); phMem.img.delete(k); return; } const tx = db.transaction(['meta', 'img'], 'readwrite'); tx.objectStore('meta').delete(k); tx.objectStore('img').delete(k); return phDone(tx); }
+const phLoadImg = src => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('img')); im.src = src; });
+async function phDecode(file) {
+  try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch (e) { const u = URL.createObjectURL(file); try { return await phLoadImg(u); } finally { setTimeout(() => URL.revokeObjectURL(u), 1000); } }
+}
+function phJpeg(src, max, q, limit) {   // уменьшает до max px по длинной стороне; если не влезает в limit — снижает качество и размер
+  const W = src.naturalWidth || src.width, H = src.naturalHeight || src.height;
+  if (!W || !H) throw new Error('img');
+  let m = max, qq = q, out = '';
+  for (let i = 0; i < 8; i++) {
+    const sc = Math.min(1, m / Math.max(W, H)), c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(W * sc)); c.height = Math.max(1, Math.round(H * sc));
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(src, 0, 0, c.width, c.height);
+    out = c.toDataURL('image/jpeg', qq);
+    if (!limit || out.length <= limit) break;
+    if (qq > 0.56) qq = Math.round((qq - 0.08) * 100) / 100; else m = Math.round(m * 0.85);
+  }
+  return out;
+}
+async function phThumb(dataUrl) { try { return phJpeg(await phLoadImg(dataUrl), 260, 0.66, 0); } catch (e) { return ''; } }
+function weightNear(k, maxDays) {
+  let best = null, bd = Infinity; const t = pk(k).getTime();
+  for (const w of S.weights) { const d = Math.abs(pk(w.date).getTime() - t) / 864e5; if (d < bd) { bd = d; best = w; } }
+  return best && bd <= (maxDays || 14) ? best : null;
+}
+function phRefresh() { if (ui.tab !== 'progress' || (MODE === 'coach' && !CO.cur)) return; if (ui.sheet || typing()) { pendingRender = true; return; } render(); }
+function phCardRefresh() { const el = $('#phCard'); if (el) el.outerHTML = photoSection(); }
+const PH = {
+  scope: null, list: [], loading: false, cache: new Map(), q: Promise.resolve(), busy: false, again: false,
+  load(scope) {
+    this.scope = scope; this.loading = true; this.list = [];
+    phAll(scope).then(ms => { if (this.scope === scope) this.set(ms); }).catch(() => { if (this.scope === scope) this.set([]); });
+  },
+  set(ms) {
+    this.list = ms.filter(m => !m.del).sort((a, b) => b.date.localeCompare(a.date) || phOrder(a) - phOrder(b) || a.ts - b.ts);
+    this.loading = false; phRefresh();
+  },
+  async reload(scope) { if (this.scope === scope) this.set(await phAll(scope)); },
+  async add(p) {
+    const scope = phScope(); if (!scope) return;
+    const id = uid(), m = { k: scope + '|' + id, scope, id, date: p.date, view: p.view || '', note: p.note || '', ts: Date.now(), by: MODE === 'coach' ? 'coach' : 'client', up: '', del: false, thumb: await phThumb(p.data) };
+    await phPut(m, p.data); this.cache.set(m.k, p.data);
+    if (this.scope === scope) this.set(this.list.concat([m]));
+    this.flush();
+  },
+  async remove(id) {
+    const scope = phScope(), m = this.list.find(x => x.id === id); if (!m || !scope) return;
+    this.list = this.list.filter(x => x !== m); this.cache.delete(m.k);
+    if (Sync.cid && Sync.phScope === scope) { await phPut(Object.assign({}, m, { del: true, ts: Date.now(), thumb: '' }), false); this.flush(); }   // надгробие уйдёт в облако
+    else await phDelRec(m.k);
+  },
+  async clear(scope) {
+    const ms = await phAll(scope).catch(() => []);
+    for (const m of ms) await phDelRec(m.k).catch(() => { });
+    if (this.scope === scope) this.set([]);
+  },
+  // изменения из облака (тренер ↔ подопечная): кешируем картинки у себя
+  onSnap(snap, cid, scope) {
+    const chs = snap.docChanges().filter(c => c.type !== 'removed' && !(c.doc.metadata && c.doc.metadata.hasPendingWrites)).map(c => ({ id: c.doc.id, r: c.doc.data() || {} }));
+    if (!chs.length) return;
+    this.q = this.q.then(async () => {
+      const loc = new Map((await phAll(scope)).map(m => [m.id, m])); let ch = false;
+      for (const { id, r } of chs) {
+        const m = loc.get(id), ts = +r.ts || 0;
+        if (r.del) { if (m && (m.ts || 0) <= ts) { await phDelRec(m.k); ch = true; } continue; }
+        if (typeof r.data !== 'string' || !/^data:image\//.test(r.data)) continue;
+        if (m && (m.ts || 0) >= ts) { if (!m.del && m.up !== cid && m.ts === ts) { m.up = cid; await phPut(m); } continue; }
+        const nm = { k: scope + '|' + id, scope, id, date: /^\d{4}-\d\d-\d\d$/.test(r.date) ? r.date : todayKey(), view: PH_VIEWS.some(x => x[0] === r.view) ? r.view : '', note: String(r.note || '').slice(0, 200), ts, by: r.by === 'coach' ? 'coach' : 'client', up: cid, del: false, thumb: await phThumb(r.data) };
+        await phPut(nm, r.data); ch = true;
+      }
+      if (ch) await this.reload(scope);
+    }).catch(() => { });
+  },
+  // отправка в облако: новые фото (в т.ч. снятые до подключения к тренеру) и удаления
+  async flush() {
+    if (this.busy) { this.again = true; return; }
+    const cid = Sync.cid, scope = Sync.phScope;
+    if (!cid || !Sync.ready || !scope || Sync.status === 'lost') return;
+    this.busy = true;
+    try {
+      do {
+        this.again = false;
+        for (const m of await phAll(scope)) {
+          if (Sync.cid !== cid) break;
+          const doc = Sync.ref().collection('photos').doc(m.id);
+          if (m.del) { await doc.set({ del: true, ts: m.ts }); await phDelRec(m.k); }
+          else if (m.up !== cid) {
+            const data = await phImg(m.k); if (!data) continue;
+            await doc.set({ date: m.date, view: m.view, note: m.note, data, ts: m.ts, by: m.by });
+            const cur = await phGet(m.k); if (cur && !cur.del) { cur.up = cid; await phPut(cur); }
+          }
+        }
+      } while (this.again && Sync.cid === cid);
+    } catch (e) { /* повторю при следующем подключении */ }
+    this.busy = false;
+  }
+};
+function phFill(root) {   // подставляет полноразмерные фото вместо миниатюр
+  root.querySelectorAll('img[data-ph]').forEach(img => {
+    const k = img.dataset.ph, c = PH.cache.get(k);
+    if (c) { img.src = c; return; }
+    phImg(k).then(d => { if (!d) return; PH.cache.set(k, d); if (PH.cache.size > 8) PH.cache.delete(PH.cache.keys().next().value); if (img.isConnected) img.src = d; }).catch(() => { });
+  });
+}
+function photoSection() {
+  const sc = phScope(); if (sc && PH.scope !== sc) PH.load(sc);
+  const list = PH.list, sel = ui.phSel, n = list.length;
+  let body;
+  if (PH.loading) body = `<p class="muted small">Загружаю фото…</p>`;
+  else if (!n) body = `<p class="muted small">Фото показывают изменения, которые не видно на весах. Снимайтесь раз в 2–4 недели: одна поза, тот же свет и похожая одежда.</p>`;
+  else {   // сетка по датам, новые сверху; подпись — дата съёмки
+    const shown = ui.phAll || sel || n <= 9 ? list : list.slice(0, 6);
+    body = `<div class="ph-grid">${shown.map(m => {
+      const si = sel ? sel.indexOf(m.id) : -1;
+      return `<div class="ph-it"><button class="ph-th${si >= 0 ? ' sel' : ''}" data-a="phTap" data-id="${esc(m.id)}"${sel ? ` aria-pressed="${si >= 0}"` : ''} aria-label="Фото за ${fmtD(m.date)}${m.view ? ', ' + phViewName(m.view).toLowerCase() : ''}">${m.thumb ? `<img src="${esc(m.thumb)}" alt="">` : ''}${m.view ? `<span class="ph-cap">${phViewName(m.view)}</span>` : ''}${si >= 0 ? `<i class="ph-num">${si + 1}</i>` : ''}</button><span class="ph-d">${phDateLong(m.date)}</span></div>`;
+    }).join('')}</div>` + (shown.length < n ? `<button class="btn-link" data-a="phMore">Показать все фото (${n})</button>` : '');
+  }
+  const ctrl = sel ? `<div class="banner plain"><p>${sel.length ? 'Выберите второе фото' : 'Выберите два фото для сравнения'}</p><button class="btn btn-ghost btn-sm" data-a="phCmpCancel">Отмена</button></div>`
+    : `<div class="row"><button class="btn btn-ghost btn-sm" data-a="phAdd">${IC.camera} Добавить фото</button>${n >= 2 ? `<button class="btn btn-ghost btn-sm" data-a="phCmpStart">Сравнить</button>` : ''}</div>`;
+  return `<section class="card" id="phCard"><div class="sec-head"><h2>Фото прогресса</h2>${n ? `<span class="muted small">${n} фото</span>` : ''}</div>${sel ? ctrl : ''}${body}${sel ? '' : ctrl}<input type="file" id="phIn" accept="image/*" hidden data-ch="phFile"></section>`;
+}
+function sheetPhNew() {
+  const p = ui.phNew; if (!p) return sheetHead('Новое фото');
+  return `${sheetHead('Новое фото')}
+    <div class="ph-stage small"><img src="${esc(p.data)}" alt="Выбранное фото"></div>
+    <div class="grid2"><div class="field"><label for="phDate">Дата</label><input id="phDate" class="input" type="date" value="${esc(p.date)}" max="${todayKey()}"></div></div>
+    <div class="field"><span class="lbl">Ракурс</span><div class="chips">${PH_VIEWS.map(([v, l]) => `<button class="chip" data-a="phView" data-v="${v}" aria-pressed="${p.view === v}">${l}</button>`).join('')}</div></div>
+    <div class="field"><label for="phNote">Заметка</label><input id="phNote" class="input" maxlength="200" placeholder="Необязательно" autocomplete="off"></div>
+    <p class="hint">Снимайтесь в одной позе, при одном свете и в похожей одежде — так изменения заметнее. ${MODE === 'coach' ? 'Подопечная тоже увидит это фото.' : S.link ? 'Фото увидит тренер.' : 'Фото хранится только на этом телефоне.'}</p>
+    <button class="btn btn-primary" data-a="phSave">Сохранить фото</button>`;
+}
+function sheetPhoto() {
+  const m = PH.list.find(x => x.id === ui.phId); if (!m) return sheetHead('Фото удалено');
+  const w = weightNear(m.date, 14);
+  const info = [phViewName(m.view), w ? `вес ${f1(w.kg)} кг${w.date !== m.date ? ' (' + fmtDM(w.date) + ')' : ''}` : '', m.by === 'coach' ? 'добавил тренер' : MODE === 'coach' ? 'добавила подопечная' : ''].filter(Boolean).join(' · ');
+  const other = Sync.cid ? (MODE === 'coach' ? ' Оно пропадёт и у подопечной.' : ' Оно пропадёт и у тренера.') : '';
+  return `${sheetHead(phDateLong(m.date))}
+    <div class="ph-stage"><img data-ph="${esc(m.k)}" src="${esc(m.thumb)}" alt="Фото прогресса за ${fmtD(m.date)}"></div>
+    ${info ? `<p class="small muted">${esc(info)}</p>` : ''}${m.note ? `<p class="note-text">${esc(m.note)}</p>` : ''}
+    ${ui.confirm === 'phDel' ? `<div class="confirm"><p>Удалить это фото?${other}</p><div class="row"><button class="btn btn-warn btn-sm" data-a="phDelYes">Удалить</button><button class="btn btn-ghost btn-sm" data-a="confirmNo">Отмена</button></div></div>`
+      : `<button class="btn btn-warn" data-a="phDel">Удалить фото</button>`}`;
+}
+function sheetPhCmp() {
+  const ms = (ui.phSel || []).map(id => PH.list.find(x => x.id === id)).filter(Boolean).sort((x, y) => x.date.localeCompare(y.date) || x.ts - y.ts);
+  if (ms.length < 2) return sheetHead('Сравнение');
+  const [a, b] = ms, wa = weightNear(a.date, 14), wb = weightNear(b.date, 14), days = Math.round((pk(b.date) - pk(a.date)) / 864e5);
+  const col = (m, w) => `<figure class="ph-col"><div class="ph-cbox"><img data-ph="${esc(m.k)}" src="${esc(m.thumb)}" alt="Фото за ${fmtD(m.date)}"></div>
+    <figcaption><b>${phDateLong(m.date)}</b><span>${[phViewName(m.view), w ? f1(w.kg) + ' кг' : 'вес не записан'].filter(Boolean).join(' · ')}</span></figcaption></figure>`;
+  return `${sheetHead('Сравнение')}<div class="ph-cmp">${col(a, wa)}${col(b, wb)}</div>
+    <p class="small muted">${days ? `Между снимками ${days} ${plural(days, 'день', 'дня', 'дней')}` : 'Снимки одного дня'}${wa && wb && wa.date !== wb.date ? ` · вес ${sgn(wb.kg - wa.kg)} кг` : ''}</p>
+    <button class="btn btn-ghost" data-a="closeSheet">Готово</button>`;
+}
+
+/* ---------- Напоминания: только для владельца телефона, хранятся в localStorage, не синхронизируются ---------- */
+const RKEY = 'tarelka-reminders', RSENT = 'tarelka-reminders-sent';
+const WD_ISO = [[1, 'Пн'], [2, 'Вт'], [3, 'Ср'], [4, 'Чт'], [5, 'Пт'], [6, 'Сб'], [7, 'Вс']];
+const ALL_DAYS = [1, 2, 3, 4, 5, 6, 7], REM_KEYS = ['water', 'train', 'weigh', 'measure'];
+const remOk = () => !!(NB && typeof NB.setReminders === 'function');
+let notifSt = null;
+const remDefDays = () => [[1], [1, 4], [1, 3, 5], [1, 2, 4, 5], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6], ALL_DAYS][clamp(S.program.days.length || 3, 1, 7) - 1].slice();
+function remCfg() {
+  const r = lsJson(RKEY) || {}, o = (d, x) => Object.assign(d, x && typeof x === 'object' ? x : {});
+  const c = { water: o({ on: false, every: 2, from: '10:00', to: '20:00' }, r.water), train: o({ on: false, days: null, time: '18:00' }, r.train),
+    weigh: o({ on: false, day: 1, time: '08:00' }, r.weigh), measure: o({ on: false, day: 7, time: '10:00' }, r.measure) };
+  if (!Array.isArray(c.train.days) || !c.train.days.length) c.train.days = remDefDays();
+  return c;
+}
+const hmOf = (t, d) => { const m = String(t || '').match(/^(\d{1,2}):(\d{2})/); return m ? [clamp(+m[1], 0, 23), clamp(+m[2], 0, 59)] : d; };
+function nextProgDay() {
+  const P = S.program.days; if (!P.length) return null;
+  const last = S.workouts.filter(w => P.some(d => d.id === w.dayId)).sort((a, b) => b.date.localeCompare(a.date))[0];
+  return last ? P[(P.findIndex(d => d.id === last.dayId) + 1) % P.length] : P[0];
+}
+function remList(c) {
+  const out = [];
+  if (c.water.on) {
+    const a = hmOf(c.water.from, [10, 0]), b = hmOf(c.water.to, [20, 0]), step = clamp(Math.round(+c.water.every || 2), 1, 4) * 60;
+    for (let t = a[0] * 60 + a[1]; t <= b[0] * 60 + b[1] && out.length < 24; t += step) {
+      const h = Math.floor(t / 60), m = t % 60;
+      out.push({ id: 'water-' + h + (m ? '-' + pad(m) : ''), h, m, days: ALL_DAYS.slice(), title: 'Вода', text: 'Время выпить стакан воды' });
+    }
+  }
+  if (c.train.on) { const [h, m] = hmOf(c.train.time, [18, 0]), d = nextProgDay(); out.push({ id: 'train', h, m, days: c.train.days.slice().sort((x, y) => x - y), title: 'Тренировка', text: d ? 'Сегодня тренировка: ' + d.name : 'Сегодня по плану тренировка' }); }
+  if (c.weigh.on) { const [h, m] = hmOf(c.weigh.time, [8, 0]); out.push({ id: 'weigh', h, m, days: [clamp(+c.weigh.day || 1, 1, 7)], title: 'Взвешивание', text: 'Утро взвешивания: встаньте на весы натощак' }); }
+  if (c.measure.on) { const [h, m] = hmOf(c.measure.time, [10, 0]); out.push({ id: 'measure', h, m, days: [clamp(+c.measure.day || 7, 1, 7)], title: 'Замеры', text: 'Пора сделать замеры' }); }
+  return out;
+}
+function remApply(force) {
+  if (!remOk() || MODE === 'coach') return;
+  const json = JSON.stringify(remList(remCfg()));
+  if (!force && json === lsGet(RSENT)) return;
+  try { NB.setReminders(json); lsSet(RSENT, json); } catch (e) { /* мост без напоминаний */ }
+}
+function remSet(c, focusKey) { lsSet(RKEY, JSON.stringify(c)); remApply(); remCardRefresh(focusKey); }
+function remCardRefresh(focusKey) {
+  const el = $('#remCard'); if (!el) return;
+  el.outerHTML = remCard();
+  if (focusKey) { const f = $(`[data-ch="remOn"][data-k="${focusKey}"]`); if (f) f.focus(); }
+}
+function remOpts(k, c) {
+  const x = c[k];
+  const time = (f, v, lab) => `<div class="field"><label for="rem_${k}_${f}">${lab}</label><input id="rem_${k}_${f}" class="input input-sm" type="time" data-ch="remTime" data-k="${k}" data-f="${f}" value="${esc(v)}"></div>`;
+  const wdays = sel => `<div class="wdays" role="group" aria-label="Дни недели">${WD_ISO.map(([n, l]) => `<button type="button" data-a="remDay" data-k="${k}" data-d="${n}" aria-pressed="${sel.includes(n)}">${l}</button>`).join('')}</div>`;
+  if (k === 'water') {
+    const n = remList({ water: x, train: {}, weigh: {}, measure: {} }).length;
+    return `<div class="rem-opts"><div class="grid2"><div class="field"><label for="rem_water_every">Каждые</label><select id="rem_water_every" class="input input-sm" data-ch="remEvery">${[1, 2, 3, 4].map(v => `<option value="${v}" ${+x.every === v ? 'selected' : ''}>${v} ч</option>`).join('')}</select></div><span></span>${time('from', x.from, 'С')}${time('to', x.to, 'До')}</div>
+      <p class="hint">${n ? `${n} ${plural(n, 'напоминание', 'напоминания', 'напоминаний')} в день` : 'Время «до» должно быть позже, чем «с».'}</p></div>`;
+  }
+  return `<div class="rem-opts">${wdays(k === 'train' ? x.days : [+x.day])}<div class="grid2">${time('time', x.time, 'Время')}</div></div>`;
+}
+function remCard() {
+  const ok = remOk(), c = remCfg(), any = ok && REM_KEYS.some(k => c[k].on);
+  if (ok) notifSt = nb('notifStatus') || notifSt;
+  const wd = n => (WD_ISO.find(x => x[0] === +n) || [0, ''])[1];
+  const rows = [['water', 'Вода', `каждые ${c.water.every} ч, ${c.water.from}–${c.water.to}`], ['train', 'Тренировка', `${c.train.days.slice().sort((a, b) => a - b).map(wd).join(', ')} в ${c.train.time}`],
+    ['weigh', 'Взвешивание', `${wd(c.weigh.day)} в ${c.weigh.time}, натощак`], ['measure', 'Замеры', `${wd(c.measure.day)} в ${c.measure.time}`]];
+  let h = `<section class="card" id="remCard"><div class="sec-head"><h2>Напоминания</h2>${any ? `<span class="pill ok">включены</span>` : ''}</div>`;
+  if (!ok) h += `<p class="small muted">Напоминания работают в приложении на телефоне.</p>`;
+  else if (any && notifSt === 'denied') h += `<div class="banner plain"><p>Уведомления для приложения выключены — напоминания не придут. Включите их в настройках.</p><button class="btn btn-ghost btn-sm" data-a="notifSettings">Открыть настройки</button></div>`;
+  else if (any && notifSt === 'need') h += `<div class="banner"><p>Разрешите уведомления, иначе напоминания не придут.</p><button class="btn btn-primary btn-sm" data-a="notifAllow">Разрешить</button></div>`;
+  h += rows.map(([k, title, sub]) => {
+    const on = ok && c[k].on;
+    return `<div class="rem${ok ? '' : ' off'}"><label class="rem-hd"><span class="grow"><b>${title}</b><small>${esc(sub)}</small></span><span class="sw"><input type="checkbox" role="switch" data-ch="remOn" data-k="${k}" aria-label="${title}" ${on ? 'checked' : ''} ${ok ? '' : 'disabled'}><i></i></span></label>${on ? remOpts(k, c) : ''}</div>`;
+  }).join('');
+  return h + `</section>`;
+}
+window.__onNotifPerm = st => { notifSt = st; remCardRefresh(); };
+
+Object.assign(SHEETS, { phNew: sheetPhNew, photo: sheetPhoto, phCmp: sheetPhCmp });
+Object.assign(A, {
+  /* комментарии тренера */
+  noteSave() {
+    if (MODE !== 'coach') return;
+    const k = ui.date, ta = $('#noteTa'), t = (ta ? ta.value : '').trim();
+    if (!t) { toast('Напишите комментарий'); if (ta) ta.focus(); return; }
+    mutate(() => { putNote(k, t); }); ui.noteEdit = null; render(); toast('Комментарий сохранён');
+  },
+  noteEdit() { ui.noteEdit = ui.date; render(); setTimeout(() => { const t = $('#noteTa'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }, 30); },
+  noteCancel() { if (ui.noteDraft) delete ui.noteDraft[ui.date]; ui.noteEdit = null; render(); },
+  noteDel() {
+    const k = ui.date, n = noteOf(k); if (!n || MODE !== 'coach') return;
+    mutate(() => { putNote(k, ''); }); ui.noteEdit = null; ui.undo = { note: { k, n } }; render();
+    toast('Комментарий удалён', { a: 'undoNote', label: 'Вернуть' });
+  },
+  undoNote() { const u = ui.undo; if (!u || !u.note) return; mutate(() => { S.notes = Object.assign({}, S.notes, { [u.note.k]: u.note.n }); }); ui.undo = null; $('#toast').hidden = true; render(); },
+  noteGo(b) { const k = b.dataset.k; if (k.startsWith('w:')) { ui.woId = k.slice(2); openSheet('workout'); } else { ui.date = k; render(); window.scrollTo(0, 0); } },
+  /* фото прогресса */
+  phAdd() { const i = $('#phIn'); if (i) i.click(); },
+  phMore() { ui.phAll = true; phCardRefresh(); },
+  phCmpStart() { ui.phSel = []; phCardRefresh(); },
+  phCmpCancel() { ui.phSel = null; phCardRefresh(); },
+  phTap(b) {
+    const id = b.dataset.id;
+    if (ui.phSel) {
+      const i = ui.phSel.indexOf(id); if (i >= 0) ui.phSel.splice(i, 1); else if (ui.phSel.length < 2) ui.phSel.push(id);
+      if (ui.phSel.length === 2) openSheet('phCmp'); else phCardRefresh();
+      return;
+    }
+    ui.phId = id; ui.confirm = null; openSheet('photo');
+  },
+  phView(b) { const p = ui.phNew; if (!p) return; p.view = p.view === b.dataset.v ? '' : b.dataset.v; $('#sheet').querySelectorAll('[data-a="phView"]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.v === p.view))); },
+  async phSave() {
+    const p = ui.phNew; if (!p) return;
+    const date = ($('#phDate') || {}).value || todayKey(), note = (($('#phNote') || {}).value || '').trim().slice(0, 200);
+    if (date > todayKey()) { toast('Дата не может быть в будущем'); return; }
+    if (S.demo) mutate(() => { });
+    ui.phNew = null; ui.sheet = null; renderSheet();
+    try { await PH.add({ data: p.data, date, view: p.view, note }); toast('Фото сохранено'); }
+    catch (e) { toast('Не получилось сохранить фото: память телефона недоступна'); }
+    render();
+  },
+  phDel() { ui.confirm = 'phDel'; renderSheet(); },
+  async phDelYes() { const id = ui.phId; ui.confirm = null; ui.sheet = null; renderSheet(); await PH.remove(id).catch(() => { }); render(); toast('Фото удалено'); },
+  /* напоминания */
+  remDay(b) {
+    const c = remCfg(), k = b.dataset.k, d = +b.dataset.d;
+    if (k === 'train') {
+      const s = new Set(c.train.days);
+      if (s.has(d)) { if (s.size === 1) { toast('Оставьте хотя бы один день'); return; } s.delete(d); } else s.add(d);
+      c.train.days = [...s].sort((x, y) => x - y);
+    } else c[k].day = d;
+    remSet(c);
+  },
+  notifAllow() { nb('requestNotif'); },
+  notifSettings() { nb('openAppSettings'); }
+});
+Object.assign(IN, { noteDraft(el) { (ui.noteDraft = ui.noteDraft || {})[el.dataset.k] = el.value; } });
+Object.assign(CH, {
+  async phFile(el) {
+    const f = el.files && el.files[0]; el.value = ''; if (!f) return;
+    toast('Готовлю фото…');
+    try {
+      const src = await phDecode(f), data = phJpeg(src, PH_MAX, PH_Q, PH_LIMIT); if (src.close) src.close();
+      $('#toast').hidden = true; ui.phNew = { data, date: todayKey(), view: '' }; openSheet('phNew');
+    } catch (e) { toast('Не получилось открыть фото. Выберите снимок в формате JPG или PNG.'); }
+  },
+  remOn(el) {
+    const c = remCfg(), k = el.dataset.k, was = REM_KEYS.some(x => c[x].on);
+    c[k].on = el.checked;
+    if (el.checked && !was) { notifSt = nb('notifStatus') || notifSt; if (notifSt === 'need') nb('requestNotif'); }
+    remSet(c, k);
+  },
+  remEvery(el) { const c = remCfg(); c.water.every = clamp(+el.value || 2, 1, 4); remSet(c); },
+  remTime(el) { if (!/^\d{1,2}:\d{2}/.test(el.value)) return; const c = remCfg(); c[el.dataset.k][el.dataset.f] = el.value.slice(0, 5); remSet(c); }
+});
+
 document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b || b.disabled) return; const fn = A[b.dataset.a]; if (fn) { e.preventDefault(); fn(b, e); } });
 document.addEventListener('input', e => { const el = e.target, h = el.dataset && el.dataset.in; if (h && IN[h]) IN[h](el, e); });
 document.addEventListener('change', e => { const el = e.target, h = el.dataset && el.dataset.ch; if (h && CH[h]) CH[h](el, e); });
@@ -1969,6 +2404,7 @@ const h0 = location.hash.replace('#', '');
 if (['today', 'train', 'progress', 'kb', 'profile'].includes(h0)) ui.tab = h0;
 refreshSteps(); syncPhoneSteps();
 render();
+remApply(true);
 if (S.session) nb('keepScreenOn', true);
 document.addEventListener('focusout', () => { setTimeout(() => { if (pendingRender && !ui.sheet && !typing()) render(); }, 60); });
 if (FB.init()) {
