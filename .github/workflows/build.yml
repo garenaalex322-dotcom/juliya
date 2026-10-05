@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  pull_request:
 
 permissions:
   contents: write
@@ -64,6 +65,7 @@ jobs:
           path: tarelka.apk
 
       - name: Выпустить релиз
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
