@@ -31,11 +31,24 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.FileProvider;
 import androidx.webkit.WebViewAssetLoader;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
+
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
+import com.google.android.gms.common.api.ApiException;
+import com.google.android.gms.common.moduleinstall.ModuleInstall;
+import com.google.android.gms.common.moduleinstall.ModuleInstallClient;
+import com.google.android.gms.common.moduleinstall.ModuleInstallRequest;
+import com.google.mlkit.common.MlKitException;
+import com.google.mlkit.vision.barcode.common.Barcode;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
 
 import org.json.JSONObject;
 
@@ -46,16 +59,22 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends Activity implements SensorEventListener {
     private static final String HOST = "appassets.androidplatform.net";
     private static final String START_URL = "https://" + HOST + "/assets/index.html";
+    private static final String USER_AGENT = "TarelkaShtanga/1.0 (Android)";
     private static final int REQ_STEPS = 42;
     private static final int REQ_FILE = 43;
+    private static final int REQ_NOTIF = 44;
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
+    private boolean fileMultiple;
 
     private WebView web;
     private SensorManager sensors;
@@ -111,12 +130,54 @@ public class MainActivity extends Activity implements SensorEventListener {
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (fileCallback != null) fileCallback.onReceiveValue(null);
                 fileCallback = callback;
+                fileMultiple = params != null && params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
+                if (params != null && !acceptsOnlyImages(params.getAcceptTypes())) return openAnyFileChooser();
                 return openPhotoChooser();
             }
         });
         web.loadUrl(START_URL);
 
         if (stepSensor != null && StepWorker.hasPermission(this)) scheduleStepWork();
+
+        // Будильники напоминаний сбрасываются при принудительной остановке приложения — ставим заново.
+        try {
+            Reminders.ensureChannel(this);
+            Reminders.rescheduleAll(getApplicationContext());
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** accept у поля выбора файла: пусто или только картинки → выбор фото с камерой. */
+    private static boolean acceptsOnlyImages(String[] types) {
+        if (types == null) return true;
+        for (String t : types) {
+            if (t == null) continue;
+            for (String part : t.split(",")) {
+                String p = part.trim().toLowerCase(Locale.ROOT);
+                if (p.isEmpty()) continue;
+                if (p.startsWith("image/")) continue;
+                if (p.matches("\\.(jpe?g|png|webp|gif|heic|heif|bmp)")) continue;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Выбор произвольного файла (если страница попросит не картинку). */
+    private boolean openAnyFileChooser() {
+        cameraUri = null;
+        Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        pick.setType("*/*");
+        if (fileMultiple) pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        try {
+            startActivityForResult(Intent.createChooser(pick, "Выберите файл"), REQ_FILE);
+            return true;
+        } catch (Exception e) {
+            if (fileCallback != null) fileCallback.onReceiveValue(null);
+            fileCallback = null;
+            return false;
+        }
     }
 
     /** Выбор фото: камера или галерея. */
@@ -124,12 +185,13 @@ public class MainActivity extends Activity implements SensorEventListener {
         Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
         pick.addCategory(Intent.CATEGORY_OPENABLE);
         pick.setType("image/*");
-        Intent chooser = Intent.createChooser(pick, "Фото еды");
+        if (fileMultiple) pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        Intent chooser = Intent.createChooser(pick, "Фото");
         cameraUri = null;
         try {
             File dir = new File(getCacheDir(), "photos");
             if (!dir.exists()) dir.mkdirs();
-            File f = new File(dir, "meal_" + System.currentTimeMillis() + ".jpg");
+            File f = new File(dir, "photo_" + System.currentTimeMillis() + ".jpg");
             cameraUri = FileProvider.getUriForFile(this, getPackageName() + ".files", f);
             Intent cam = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
             cam.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
@@ -156,8 +218,19 @@ public class MainActivity extends Activity implements SensorEventListener {
         if (requestCode != REQ_FILE || fileCallback == null) return;
         Uri[] result = null;
         if (resultCode == RESULT_OK) {
-            if (data != null && data.getData() != null) result = new Uri[]{data.getData()};
-            else if (cameraUri != null) result = new Uri[]{cameraUri};
+            ClipData clip = data == null ? null : data.getClipData();
+            if (fileMultiple && clip != null && clip.getItemCount() > 0) {
+                List<Uri> list = new ArrayList<>();
+                for (int i = 0; i < clip.getItemCount(); i++) {
+                    Uri u = clip.getItemAt(i).getUri();
+                    if (u != null) list.add(u);
+                }
+                if (!list.isEmpty()) result = list.toArray(new Uri[0]);
+            }
+            if (result == null) {
+                if (data != null && data.getData() != null) result = new Uri[]{data.getData()};
+                else if (cameraUri != null) result = new Uri[]{cameraUri};
+            }
         }
         fileCallback.onReceiveValue(result);
         fileCallback = null;
@@ -185,6 +258,171 @@ public class MainActivity extends Activity implements SensorEventListener {
         if (asked && Build.VERSION.SDK_INT >= 29
                 && !shouldShowRequestPermissionRationale(Manifest.permission.ACTIVITY_RECOGNITION)) return "denied";
         return "need";
+    }
+
+    /** Разрешение на уведомления: ok — можно, need — можно спросить, denied — только через настройки. */
+    private String notifStatus() {
+        if (Build.VERSION.SDK_INT < 33) {
+            if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return "denied";
+            return Reminders.channelBlocked(this) ? "denied" : "ok";
+        }
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return "denied";
+            return Reminders.channelBlocked(this) ? "denied" : "ok";
+        }
+        boolean asked = getSharedPreferences("app", MODE_PRIVATE).getBoolean("askedNotif", false);
+        if (asked && !shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) return "denied";
+        return "need";
+    }
+
+    private void reportNotif() {
+        js("window.__onNotifPerm && window.__onNotifPerm(" + JSONObject.quote(notifStatus()) + ")");
+    }
+
+    // ---------- сканер штрихкодов (Google Code Scanner, без разрешения на камеру) ----------
+
+    private void barcodeResult(final String code, final String err) {
+        final String js = "window.__onBarcode && window.__onBarcode("
+                + (code == null ? "null" : JSONObject.quote(code))
+                + (err == null ? "" : "," + JSONObject.quote(err)) + ")";
+        runOnUiThread(() -> js(js));
+    }
+
+    private void startBarcodeScan() {
+        try {
+            int gms = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(this);
+            if (gms == ConnectionResult.SERVICE_MISSING || gms == ConnectionResult.SERVICE_DISABLED
+                    || gms == ConnectionResult.SERVICE_INVALID) {
+                barcodeResult(null, "unavailable");
+                return;
+            }
+            GmsBarcodeScannerOptions opts = new GmsBarcodeScannerOptions.Builder()
+                    .setBarcodeFormats(Barcode.FORMAT_EAN_13, Barcode.FORMAT_EAN_8,
+                            Barcode.FORMAT_UPC_A, Barcode.FORMAT_UPC_E)
+                    .enableAutoZoom()
+                    .build();
+            final GmsBarcodeScanner scanner = GmsBarcodeScanning.getClient(this, opts);
+            scanner.startScan()
+                    .addOnSuccessListener(barcode -> {
+                        String v = barcode == null ? null : barcode.getRawValue();
+                        if ((v == null || v.isEmpty()) && barcode != null) v = barcode.getDisplayValue();
+                        if (v == null || v.isEmpty()) barcodeResult(null, "empty");
+                        else barcodeResult(v.trim(), null);
+                    })
+                    .addOnCanceledListener(() -> barcodeResult(null, "canceled"))
+                    .addOnFailureListener(err -> onScanFailed(scanner, err));
+        } catch (Throwable t) {
+            barcodeResult(null, "unavailable");
+        }
+    }
+
+    private void onScanFailed(GmsBarcodeScanner scanner, Exception err) {
+        if (err instanceof MlKitException) {
+            int code = ((MlKitException) err).getErrorCode();
+            if (code == 201) { // CODE_SCANNER_CANCELLED
+                barcodeResult(null, "canceled");
+                return;
+            }
+            if (code == 204) { // CODE_SCANNER_TASK_IN_PROGRESS
+                barcodeResult(null, "busy");
+                return;
+            }
+            if (code == 207) { // CODE_SCANNER_GOOGLE_PLAY_SERVICES_VERSION_TOO_OLD
+                barcodeResult(null, "unavailable");
+                return;
+            }
+        }
+        // Скорее всего, модуль сканера ещё не скачан — проверяем и просим установить.
+        try {
+            final ModuleInstallClient mic = ModuleInstall.getClient(this);
+            mic.areModulesAvailable(scanner)
+                    .addOnSuccessListener(r -> {
+                        if (r.areModulesAvailable()) barcodeResult(null, scanError(err));
+                        else installScanner(mic, scanner, err);
+                    })
+                    .addOnFailureListener(e2 -> barcodeResult(null, "unavailable"));
+        } catch (Throwable t) {
+            barcodeResult(null, "unavailable");
+        }
+    }
+
+    private void installScanner(ModuleInstallClient mic, GmsBarcodeScanner scanner, Exception err) {
+        try {
+            ModuleInstallRequest req = ModuleInstallRequest.newBuilder().addApi(scanner).build();
+            mic.installModules(req)
+                    .addOnSuccessListener(r -> {
+                        if (r.areModulesAlreadyInstalled()) barcodeResult(null, scanError(err));
+                        else barcodeResult(null, "installing");
+                    })
+                    .addOnFailureListener(e2 -> barcodeResult(null, "unavailable"));
+        } catch (Throwable t) {
+            barcodeResult(null, "unavailable");
+        }
+    }
+
+    /** Короткий текст ошибки сканера для страницы. */
+    private static String scanError(Exception e) {
+        if (e instanceof MlKitException && ((MlKitException) e).getErrorCode() == MlKitException.UNAVAILABLE) {
+            return "unavailable";
+        }
+        if (e instanceof ApiException) {
+            int s = ((ApiException) e).getStatusCode();
+            if (s == ConnectionResult.SERVICE_MISSING || s == ConnectionResult.SERVICE_DISABLED
+                    || s == ConnectionResult.SERVICE_INVALID || s == ConnectionResult.API_UNAVAILABLE
+                    || s == ConnectionResult.SERVICE_VERSION_UPDATE_REQUIRED) return "unavailable";
+        }
+        String m = e == null ? null : e.getMessage();
+        if (m == null || m.trim().isEmpty()) m = e == null ? "error" : e.getClass().getSimpleName();
+        m = m.trim();
+        return m.length() > 120 ? m.substring(0, 120) : m;
+    }
+
+    // ---------- HTTP ----------
+
+    /** Запрос в фоне; ответ приходит в window.__httpDone(id, code, text). code -1 — ошибка сети. */
+    private void http(final String method, final String id, final String url, final String headersJson, final String body) {
+        new Thread(() -> {
+            int code;
+            String text;
+            HttpURLConnection c = null;
+            try {
+                boolean post = "POST".equals(method);
+                c = (HttpURLConnection) new URL(url).openConnection();
+                c.setRequestMethod(method);
+                c.setConnectTimeout(20000);
+                c.setReadTimeout(post ? 90000 : 30000);
+                boolean hasUa = false;
+                if (headersJson != null && !headersJson.trim().isEmpty() && !"null".equals(headersJson.trim())) {
+                    JSONObject h = new JSONObject(headersJson);
+                    Iterator<String> it = h.keys();
+                    while (it.hasNext()) {
+                        String k = it.next();
+                        if ("user-agent".equalsIgnoreCase(k)) hasUa = true;
+                        c.setRequestProperty(k, h.getString(k));
+                    }
+                }
+                if (!post && !hasUa) c.setRequestProperty("User-Agent", USER_AGENT);
+                if (post) {
+                    c.setDoOutput(true);
+                    byte[] b = (body == null ? "" : body).getBytes(StandardCharsets.UTF_8);
+                    c.setFixedLengthStreamingMode(b.length);
+                    try (OutputStream os = c.getOutputStream()) {
+                        os.write(b);
+                    }
+                }
+                code = c.getResponseCode();
+                InputStream is = code >= 400 ? c.getErrorStream() : c.getInputStream();
+                text = is == null ? "" : readAll(is);
+            } catch (Exception e) {
+                code = -1;
+                String m = e.getMessage();
+                text = m == null || m.isEmpty() ? e.getClass().getSimpleName() : m;
+            } finally {
+                if (c != null) c.disconnect();
+            }
+            final String js = "window.__httpDone && window.__httpDone(" + JSONObject.quote(id) + "," + code + "," + JSONObject.quote(text) + ")";
+            runOnUiThread(() -> js(js));
+        }).start();
     }
 
     private void js(String code) {
@@ -216,6 +454,11 @@ public class MainActivity extends Activity implements SensorEventListener {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_NOTIF) {
+            Reminders.ensureChannel(this);
+            reportNotif();
+            return;
+        }
         if (requestCode != REQ_STEPS) return;
         if (StepWorker.hasPermission(this)) {
             scheduleStepWork();
@@ -314,39 +557,48 @@ public class MainActivity extends Activity implements SensorEventListener {
         /** POST-запрос в фоне (для распознавания еды); ответ приходит в window.__httpDone. */
         @JavascriptInterface
         public void httpPost(final String id, final String url, final String headersJson, final String body) {
-            new Thread(() -> {
-                int code;
-                String text;
-                HttpURLConnection c = null;
-                try {
-                    c = (HttpURLConnection) new URL(url).openConnection();
-                    c.setRequestMethod("POST");
-                    c.setDoOutput(true);
-                    c.setConnectTimeout(20000);
-                    c.setReadTimeout(90000);
-                    JSONObject h = new JSONObject(headersJson);
-                    Iterator<String> it = h.keys();
-                    while (it.hasNext()) {
-                        String k = it.next();
-                        c.setRequestProperty(k, h.getString(k));
-                    }
-                    byte[] b = body.getBytes(StandardCharsets.UTF_8);
-                    c.setFixedLengthStreamingMode(b.length);
-                    try (OutputStream os = c.getOutputStream()) {
-                        os.write(b);
-                    }
-                    code = c.getResponseCode();
-                    InputStream is = code >= 400 ? c.getErrorStream() : c.getInputStream();
-                    text = is == null ? "" : readAll(is);
-                } catch (Exception e) {
-                    code = -1;
-                    text = String.valueOf(e.getMessage());
-                } finally {
-                    if (c != null) c.disconnect();
+            http("POST", id, url, headersJson, body);
+        }
+
+        /** GET-запрос в фоне (например, поиск продукта по штрихкоду); ответ приходит в window.__httpDone. */
+        @JavascriptInterface
+        public void httpGet(final String id, final String url, final String headersJson) {
+            http("GET", id, url, headersJson, null);
+        }
+
+        /** Сканирование штрихкода; результат — window.__onBarcode(code | null, err?). */
+        @JavascriptInterface
+        public void scanBarcode() {
+            runOnUiThread(MainActivity.this::startBarcodeScan);
+        }
+
+        @JavascriptInterface
+        public String notifStatus() {
+            return MainActivity.this.notifStatus();
+        }
+
+        @JavascriptInterface
+        public void requestNotif() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT < 33
+                        || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                    Reminders.ensureChannel(MainActivity.this);
+                    reportNotif();
+                    return;
                 }
-                final String js = "window.__httpDone && window.__httpDone(" + JSONObject.quote(id) + "," + code + "," + JSONObject.quote(text) + ")";
-                runOnUiThread(() -> js(js));
-            }).start();
+                getSharedPreferences("app", MODE_PRIVATE).edit().putBoolean("askedNotif", true).apply();
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF);
+            });
+        }
+
+        /** Заменяет все напоминания: JSON-массив {id, h, m, days[1..7], title, text}; "[]" — отменить все. */
+        @JavascriptInterface
+        public String setReminders(final String json) {
+            try {
+                return Reminders.set(getApplicationContext(), json);
+            } catch (Exception e) {
+                return "error: " + e.getMessage();
+            }
         }
 
         @JavascriptInterface
