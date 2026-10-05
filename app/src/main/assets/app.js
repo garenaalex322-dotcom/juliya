@@ -60,7 +60,7 @@ const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return 
 const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); return true; } catch (e) { return false; } };
 const lsJson = k => { try { return JSON.parse(lsGet(k) || 'null'); } catch (e) { return null; } };
 let MODE = lsGet('tarelka-mode') === 'coach' ? 'coach' : 'client';
-const CO = { user: null, authChecked: false, ready: false, clients: [], cur: null, ai: { key: '', model: '' }, unsub: null, err: '', busy: false, confirm: null, autoOpened: false };
+const CO = { user: null, authChecked: false, ready: false, clients: [], cur: null, ai: { key: '', model: '' }, unsub: null, err: '', info: '', busy: false, confirm: null, autoOpened: false };
 function storeKey() { return MODE === 'coach' && CO.cur ? KEY + '-c-' + CO.cur : KEY; }
 function loadState() { if (MODE === 'coach' && !CO.cur) return null; return lsJson(storeKey()); }
 function save(full) { if (S.demo) return; if (Sync.cid) Sync.touch(full); storageOk = lsSet(storeKey(), JSON.stringify(S)); }
@@ -1274,8 +1274,9 @@ function renderCoach() {
     <section class="card"><h2>Вход для тренера</h2>
       <div class="field"><label for="coEmail">Почта</label><input id="coEmail" class="input" type="email" autocomplete="username" value="${esc(ui.coEmail || '')}"></div>
       <div class="field"><label for="coPass">Пароль</label><input id="coPass" class="input" type="password" autocomplete="current-password"></div>
-      ${CO.err ? `<p class="small warn-text">${esc(CO.err)}</p>` : ''}
+      ${CO.err ? `<p class="small warn-text">${esc(CO.err)}</p>` : ''}${CO.info ? `<p class="small">${esc(CO.info)}</p>` : ''}
       <div class="row"><button class="btn btn-primary grow" data-a="coLogin" ${CO.busy ? 'disabled' : ''}>Войти</button><button class="btn btn-ghost grow" data-a="coSignup" ${CO.busy ? 'disabled' : ''}>Создать аккаунт</button></div>
+      <button class="btn-link" data-a="coForgot" ${CO.busy ? 'disabled' : ''}>Забыли пароль?</button>
       <p class="hint">Аккаунт создаётся один раз. Пароль — не короче 6 символов.</p></section>${back}`;
   }
   const list = CO.clients.map(c => `<section class="card"><div class="sec-head"><h2>${esc(c.name)}</h2><span class="pill ${c.linked ? 'ok' : ''}">${c.linked ? 'подключена' : 'ждёт код'}</span></div>
@@ -1665,12 +1666,21 @@ const A = {
   async coLogin(b, e, create) {
     const email = ($('#coEmail').value || '').trim(), pass = $('#coPass').value || '';
     ui.coEmail = email;
-    if (!email || !pass) { CO.err = 'Введите почту и пароль.'; render(); return; }
-    CO.busy = true; CO.err = ''; render();
+    if (!email || !pass) { CO.err = 'Введите почту и пароль.'; CO.info = ''; render(); return; }
+    CO.busy = true; CO.err = ''; CO.info = ''; render();
     try { await Coach.login(email, pass, !!create); } catch (err) { CO.err = fbErr(err); }
     CO.busy = false; render();
   },
   coSignup(b, e) { return A.coLogin(b, e, true); },
+  async coForgot() {
+    const email = ($('#coEmail').value || '').trim(); ui.coEmail = email;
+    if (!email) { CO.err = 'Впишите почту, на которую создан аккаунт тренера, и нажмите «Забыли пароль?» ещё раз.'; CO.info = ''; render(); return; }
+    if (!FB.init()) { CO.err = 'Нет связи с сервером. Проверьте интернет.'; render(); return; }
+    CO.busy = true; CO.err = ''; CO.info = ''; render();
+    try { FB.auth.languageCode = 'ru'; await FB.auth.sendPasswordResetEmail(email); CO.info = `Письмо со ссылкой для нового пароля отправлено на ${email}. Если его нет во «Входящих» через пару минут, загляните в «Спам». Откройте ссылку, задайте новый пароль и войдите с ним здесь.`; }
+    catch (err) { CO.err = fbErr(err); }
+    CO.busy = false; render();
+  },
   async coAdd() {
     const name = ($('#coNewName').value || '').trim(); if (!name) { toast('Впишите имя подопечной'); return; }
     CO.busy = true; render();
