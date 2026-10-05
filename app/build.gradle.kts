@@ -44,4 +44,8 @@ dependencies {
     implementation("androidx.work:work-runtime:2.9.1")
     implementation("androidx.annotation:annotation:1.8.0")
     implementation("androidx.core:core:1.13.1")
+    // Сканер штрихкодов Google (интерфейс и камера — внутри Google Play services)
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    // ModuleInstall — догрузка модуля сканера, если его ещё нет на телефоне
+    implementation("com.google.android.gms:play-services-base:18.5.0")
 }

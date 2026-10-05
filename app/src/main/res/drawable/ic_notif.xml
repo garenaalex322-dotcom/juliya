@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Значок уведомлений: гантель, белая на прозрачном (монохромный) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3,8.5h0.5a1,1 0 0,1 1,1v5a1,1 0 0,1 -1,1h-0.5a1,1 0 0,1 -1,-1v-5a1,1 0 0,1 1,-1z M5.5,6h1a1,1 0 0,1 1,1v10a1,1 0 0,1 -1,1h-1a1,1 0 0,1 -1,-1v-10a1,1 0 0,1 1,-1z M7.5,11h9v2h-9z M17.5,6h1a1,1 0 0,1 1,1v10a1,1 0 0,1 -1,1h-1a1,1 0 0,1 -1,-1v-10a1,1 0 0,1 1,-1z M20.5,8.5h0.5a1,1 0 0,1 1,1v5a1,1 0 0,1 -1,1h-0.5a1,1 0 0,1 -1,-1v-5a1,1 0 0,1 1,-1z" />
+</vector>
