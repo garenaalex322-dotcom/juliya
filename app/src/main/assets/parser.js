@@ -20,7 +20,7 @@ function customFoods() {
     if (st.length > 1) al.push([st[0]]);
     const piece = +c.piece || 0;
     return { id: c.id, name: c.name, aliases: al, kcal: +c.kcal || 0, p: +c.p || 0, f: +c.f || 0, c: +c.c || 0,
-      portion: piece || 100, piece, custom: true };
+      portion: +c.portion || piece || 100, piece, custom: true };
   });
 }
 const allFoods = () => customFoods().concat(FOODS);
