@@ -491,4 +491,6 @@
 
   // убрать заготовки без анимации
   Object.keys(X).forEach(k => { if (!X[k]) delete X[k]; });
+  // помощники для файлов с дополнительными упражнениями
+  ANIM.H = { HANG, copy, ST, STF, shift, hold, line, SIT, SITF, SUP, PRO, QUAD, benchFlat, seatPads, seatF, squat, hinge, FRONTL, BACKL, splitSq };
 })();

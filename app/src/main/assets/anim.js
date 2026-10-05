@@ -191,11 +191,30 @@ const ANIM = (() => {
       seg(ctx, [pr.cx + 10, pr.cy - 6], [pr.hx, pr.hy], 4, C.eqs); rrect(ctx, pr.sx - 12, pr.sy + 4, 24, 5, 2, C.eqs, null);
       circ(ctx, [pr.cx, pr.cy], 8, C.eqs, 2.5);
       if (pr.wheel) circ(ctx, [pr.cx + 34, G - 18], 16, C.eqs, 3);
+    } else if (t === 'ball') {
+      // фитбол: либо стоит на месте (x, y), либо привязан к суставу (j, i, off)
+      const r = pr.r || 22, c = pr.j ? J(sk, pr.j, pr.i) : [pr.x, pr.y], p = pr.j ? [c[0] + (pr.off ? pr.off[0] : 0), c[1] + (pr.off ? pr.off[1] : 0)] : c;
+      circ(ctx, p, r, C.eq); circ(ctx, p, r, C.eqs, 1.5);
+    } else if (t === 'lever') {
+      // гриф, упёртый одним концом в пол (лендмайн, Т-тяга): от точки опоры до рук и чуть дальше, с блином на конце
+      const w = hands(sk, pr.h || 'n')[0], a = Math.atan2(w[1] - pr.from[1], w[0] - pr.from[0]) / RAD, ext = pr.ext ?? 12, end = pt(w, a, ext);
+      seg(ctx, pr.from, end, 4, C.eqs); circ(ctx, pr.from, 4, C.eqs);
+      if (pr.plate !== false) { const pc = pt(w, a, ext - 3); seg(ctx, pt(pc, a + 90, pr.pr || 13), pt(pc, a - 90, pr.pr || 13), 7, C.acc); }
+    } else if (t === 'wave') {
+      // канат для «battle ropes»: волна от точки крепления до рук; фаза берётся из позы (x.ph)
+      const amp = pr.amp ?? 7, ph = sk.x.ph ?? 0;
+      hands(sk, pr.h || 'n').forEach(w => {
+        ctx.strokeStyle = C.cable; ctx.lineWidth = 2.5; ctx.beginPath();
+        const dx = w[0] - pr.from[0], dy = w[1] - pr.from[1], len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+        for (let i = 0; i <= 40; i++) { const s = i / 40, o = amp * Math.sin(s * Math.PI * 4 + ph) * Math.sin(s * Math.PI); const x = pr.from[0] + dx * s + nx * o, y = pr.from[1] + dy * s + ny * o; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+        ctx.stroke();
+      });
+      circ(ctx, pr.from, 4, C.eqs);
     } else if (t === 'crank') {
       const a = J(sk, 'ankle', 0), b = J(sk, 'ankle', 1); seg(ctx, [pr.cx, pr.cy], a, 3, C.eqs); seg(ctx, [pr.cx, pr.cy], b, 3, C.line);
     }
   }
-  const BACK = new Set(['bench', 'pad', 'box', 'line', 'rails', 'wall', 'mat', 'tread', 'bike', 'backpad', 'seat']);
+  const BACK = new Set(['bench', 'pad', 'box', 'line', 'rails', 'wall', 'mat', 'tread', 'bike', 'backpad', 'seat', 'ball']);
   function drawProps(ctx, props, sk, C, back) { (props || []).forEach(pr => { const isBack = pr.z != null ? pr.z < 0 : BACK.has(pr.t); if (isBack === back) drawProp(ctx, pr, sk, C); }); }
 
   // ---------- рамка ----------
@@ -214,7 +233,8 @@ const ANIM = (() => {
       else if (pr.t === 'pad' || pr.t === 'box') { addp([pr.x, pr.y]); addp([pr.x + pr.w, pr.y + pr.h]); }
       else if (pr.t === 'line') pr.p.forEach(addp);
       else if (pr.t === 'bar') { addp([pr.x ?? pr.x1, pr.y]); if (pr.x2 != null) addp([pr.x2, pr.y]); }
-      else if (pr.t === 'cable' || pr.t === 'band') addp(pr.from);
+      else if (pr.t === 'cable' || pr.t === 'band' || pr.t === 'lever' || pr.t === 'wave') addp(pr.from);
+      else if (pr.t === 'ball' && !pr.j) { const r = pr.r || 22; addp([pr.x - r, pr.y - r]); addp([pr.x + r, pr.y + r]); }
       else if (pr.t === 'rails') { addp([pr.x1, pr.y1 ?? 20]); if (pr.x2 != null) addp([pr.x2, pr.y1 ?? 20]); }
       else if (pr.t === 'tread') { addp([pr.x1, G]); addp([pr.x2 + 8, 70]); }
       else if (pr.t === 'bike') { addp([pr.cx - 30, G]); addp([pr.cx + (pr.wheel ? 52 : 30), G]); addp([pr.hx, pr.hy]); }
