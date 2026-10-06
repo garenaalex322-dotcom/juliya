@@ -341,3 +341,13 @@ select.input{appearance:auto}
 .wdays button{min-height:40px;padding:0;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font-size:13px;font-weight:600;cursor:pointer}
 .wdays button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 input[type="time"].input{min-width:0}
+
+/* веб-версия: подсказка установки на айфоне, сканер штрихкода через камеру */
+.install-hint{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.install-hint p{margin:0;font-size:14px}
+.scan-ov{position:fixed;inset:0;z-index:60;background:#000;color:#fff;display:flex;flex-direction:column;padding:calc(10px + env(safe-area-inset-top,0px)) 14px calc(16px + env(safe-area-inset-bottom,0px));gap:12px}
+.scan-hd{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.scan-hd .icon-btn{background:rgba(255,255,255,.12);border-color:transparent;color:#fff}
+.scan-box{flex:1;min-height:0;border-radius:14px;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center}
+.scan-box video{width:100%!important;height:100%!important;object-fit:cover}
+.scan-hint{margin:0;font-size:14px;color:rgba(255,255,255,.75);text-align:center}

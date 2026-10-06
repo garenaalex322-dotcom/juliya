@@ -347,7 +347,7 @@ function renderToday() {
   return `<header class="hd"><button class="icon-btn" data-a="dayPrev" aria-label="Предыдущий день">${IC.left}</button>
     <div class="hd-date"><span class="eyebrow">${WDF[d.getDay()]}</span><strong>${relD(k)}</strong></div>
     <button class="icon-btn" data-a="dayNext" aria-label="Следующий день" ${k >= t ? 'disabled' : ''}>${IC.right}</button></header>
-  ${demoBanner()}
+  ${installBanner()}${demoBanner()}
   ${tg ? '' : `<div class="banner"><p>Укажите возраст, рост и вес, чтобы рассчитать дневную норму.</p><button class="btn btn-ghost btn-sm" data-a="tab" data-tab="profile">Указать</button></div>`}
   ${notesBanner()}${noteCard()}
   <section class="card"><div class="plate">${plateSvg(tot, tg)}<div class="macros">
@@ -416,7 +416,7 @@ function renderSearch() {
 function sheetHead(title, act) { return `<div class="grabber"></div><div class="sheet-hd"><h2 id="sheetTitle">${esc(title)}</h2><button class="icon-btn" data-a="${act || 'closeSheet'}" aria-label="Закрыть">${IC.x}</button></div>`; }
 function sheetAdd() {
   const rec = S.recent.map((r, i) => foodById(r.id) ? `<button class="chip" data-a="pickRecent" data-i="${i}">${esc(r.name)} · ${f0(r.grams)}</button>` : '').join('');
-  const canScan = !!(NB && typeof NB.scanBarcode === 'function'), ds = dishList();
+  const canScan = canScanNow(), ds = dishList();
   const bcRow = `<div class="row">${canScan ? `<button class="btn btn-ghost btn-sm grow" data-a="bcScan">${IC.barcode} Сканировать штрихкод</button><button class="btn btn-ghost btn-sm" data-a="bcOpen">Ввести код</button>`
     : `<button class="btn btn-ghost btn-sm grow" data-a="bcOpen">${IC.barcode} Штрихкод с упаковки</button>`}</div>`;
   const dishHtml = `<div class="field"><div class="lbl-row"><span class="lbl">Мои блюда</span><button class="btn-link" data-a="dishNew">+ Создать блюдо</button></div>
@@ -458,7 +458,7 @@ function sheetSteps() {
   const st = stepsFor(ui.date);
   return `${sheetHead('Шаги за ' + relD(ui.date).toLowerCase())}
   <div class="field"><label for="stepsIn">Количество шагов</label><input id="stepsIn" class="input num" inputmode="numeric" value="${st.src === 'manual' ? esc(st.n) : ''}" placeholder="${st.n ? esc(st.n) : 'например, 8000'}"></div>
-  <p class="hint">Пригодится, если шаги считает браслет или часы. Введённое число заменит подсчёт телефона за этот день.</p>
+  <p class="hint">${NB ? 'Пригодится, если шаги считает браслет или часы. Введённое число заменит подсчёт телефона за этот день.' : IS_IOS ? 'Шаги за день видны в приложении «Здоровье» → «Шаги». Перепишите число сюда, удобно делать это вечером.' : 'Перепишите число шагов из браслета, часов или приложения здоровья на телефоне.'}</p>
   <div class="row"><button class="btn btn-primary grow" data-a="saveSteps">Сохранить</button>${st.src === 'manual' && NB ? `<button class="btn btn-ghost" data-a="clearSteps">Считать телефоном</button>` : ''}</div>`;
 }
 function sheetWater() {
@@ -1406,10 +1406,11 @@ window.__onBarcode = (code, err) => {
   if (code) { bcLookup(code, true); return; }
   if (!err || err === 'canceled') return;
   if (err === 'installing') { toast('Модуль сканера загружается, попробуйте через минуту'); return; }
+  if (err === 'camera') { showBc({ step: 'enter', code: '', msg: IS_IOS ? 'Нет доступа к камере. Разрешите его: Настройки → Приложения → Safari → Камера, — или введите цифры под штрихкодом вручную.' : 'Нет доступа к камере. Разрешите его в настройках браузера или введите цифры под штрихкодом вручную.' }); return; }
   showBc({ step: 'enter', code: '', noScan: err === 'unavailable', msg: err === 'unavailable' ? 'Сканер штрихкодов на этом телефоне недоступен. Введите цифры под штрихкодом — они напечатаны на упаковке.' : 'Не получилось отсканировать штрихкод. Введите цифры под ним вручную.' });
 };
 function sheetBarcode() {
-  const bc = ui.bc || { step: 'enter', code: '' }, canScan = !!(NB && typeof NB.scanBarcode === 'function');
+  const bc = ui.bc || { step: 'enter', code: '' }, canScan = canScanNow();
   const head = sheetHead('Продукт по штрихкоду', 'bcBack');
   if (bc.step === 'load') return `${head}<p class="bc-wait"><span class="spin" aria-hidden="true"></span>Ищу продукт ${esc(bc.code)} в базе Open Food Facts…</p><button class="btn btn-ghost" data-a="bcBack">Отмена</button>`;
   if (bc.step === 'form') {
@@ -1530,7 +1531,7 @@ function render() {
     if (ui.tab === 'kb') drawThumbs(v);
   }
   const want = !!S.session;
-  if (want !== keepOn) { keepOn = want; nb('keepScreenOn', want); }
+  if (want !== keepOn) { keepOn = want; nb('keepScreenOn', want); webKeepOn(want); }
 }
 const SHEETS = { add: sheetAdd, edit: sheetEdit, steps: sheetSteps, weight: sheetWeight, measures: sheetMeasures, pick: sheetPick, ex: sheetEx, art: sheetArt, templates: sheetTemplates, import: sheetImport, workout: sheetWorkout, water: sheetWater, dish: sheetDish, barcode: sheetBarcode };
 function openSheet(kind) { ui.sheet = kind; renderSheet(); const sh = $('#sheet'); sh.scrollTop = 0; if (kind === 'add') setTimeout(() => { const ta = $('#foodText'); if (ta) ta.focus(); }, 60); }
@@ -1600,7 +1601,7 @@ const A = {
   pickRecent(b) { const r = S.recent[+b.dataset.i], f = r && foodById(r.id); if (!f) return; ui.extra.push({ key: 'x|' + uid(), food: f, grams: r.grams }); renderPreview(); },
   /* штрихкод */
   bcScan() {
-    if (!(NB && typeof NB.scanBarcode === 'function')) { A.bcOpen(); return; }
+    if (!(NB && typeof NB.scanBarcode === 'function')) { if (webScanOk()) webScan(); else A.bcOpen(); return; }
     try { NB.scanBarcode(); } catch (e) { showBc({ step: 'enter', code: '', msg: 'Сканер не запустился. Введите цифры под штрихкодом вручную.' }); }
   },
   bcOpen() { showBc({ step: 'enter', code: '' }); setTimeout(() => { const i = $('#bcCode'); if (i) i.focus(); }, 60); },
@@ -2286,7 +2287,7 @@ function remCard() {
   const rows = [['water', 'Вода', `каждые ${c.water.every} ч, ${c.water.from}–${c.water.to}`], ['train', 'Тренировка', `${c.train.days.slice().sort((a, b) => a - b).map(wd).join(', ')} в ${c.train.time}`],
     ['weigh', 'Взвешивание', `${wd(c.weigh.day)} в ${c.weigh.time}, натощак`], ['measure', 'Замеры', `${wd(c.measure.day)} в ${c.measure.time}`]];
   let h = `<section class="card" id="remCard"><div class="sec-head"><h2>Напоминания</h2>${any ? `<span class="pill ok">включены</span>` : ''}</div>`;
-  if (!ok) h += `<p class="small muted">Напоминания работают в приложении на телефоне.</p>`;
+  if (!ok) h += `<p class="small muted">${IS_IOS ? 'На айфоне напоминания удобнее поставить в стандартном приложении «Напоминания»: например, «Тренировка» по вторникам и четвергам в 17:00 и «Вода» каждые 2 часа.' : 'Напоминания работают в Android-приложении. В браузере поставьте их в приложении «Напоминания» или «Часы» на телефоне.'}</p>`;
   else if (any && notifSt === 'denied') h += `<div class="banner plain"><p>Уведомления для приложения выключены — напоминания не придут. Включите их в настройках.</p><button class="btn btn-ghost btn-sm" data-a="notifSettings">Открыть настройки</button></div>`;
   else if (any && notifSt === 'need') h += `<div class="banner"><p>Разрешите уведомления, иначе напоминания не придут.</p><button class="btn btn-primary btn-sm" data-a="notifAllow">Разрешить</button></div>`;
   h += rows.map(([k, title, sub]) => {
@@ -2402,12 +2403,63 @@ window.onAppResume = () => {
   if (!ui.sheet) render();
 };
 
+/* ================= Веб-версия: айфон и браузер ================= */
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const STANDALONE = !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches));
+function installBanner() {
+  if (NB || STANDALONE || !IS_IOS || lsGet('tarelka-ios-hint') === 'hide') return '';
+  return `<div class="banner plain install-hint"><p><b>Установите как приложение.</b> В Safari нажмите «Поделиться» (квадрат со стрелкой вверх; в новых iOS — сначала «•••»), затем «На экран „Домой“». Записи, сделанные здесь, в Safari, в приложение на экране «Домой» не перенесутся.</p><button class="btn-link" data-a="hideInstall">Понятно</button></div>`;
+}
+A.hideInstall = () => { lsSet('tarelka-ios-hint', 'hide'); render(); };
+const webScanOk = () => !NB && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && (location.protocol === 'https:' || location.hostname === 'localhost');
+const canScanNow = () => !!(NB && typeof NB.scanBarcode === 'function') || webScanOk();
+const loadScript = src => new Promise((res, rej) => { const el = document.createElement('script'); el.src = src; el.onload = res; el.onerror = () => rej(new Error('load ' + src)); document.head.appendChild(el); });
+let webScanner = null, webScanBusy = false;
+async function webScan() {
+  if (webScanBusy) return; webScanBusy = true;
+  const ov = document.createElement('div'); ov.className = 'scan-ov'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-label', 'Сканирование штрихкода');
+  ov.innerHTML = `<div class="scan-hd"><b>Наведите камеру на штрихкод</b><button class="icon-btn" data-scan-x aria-label="Закрыть">${IC.x}</button></div><div id="scanBox" class="scan-box"></div><p class="scan-hint">Штрихкод целиком в рамке, телефон держите ровно. Если не читается — закройте и введите цифры вручную.</p>`;
+  document.body.appendChild(ov);
+  let done = false;
+  const finish = async (code, err) => {
+    if (done) return; done = true;
+    const sc = webScanner; webScanner = null;
+    try { if (sc) { if (sc.isScanning) await sc.stop(); sc.clear(); } } catch (e) { /* камера уже выключена */ }
+    ov.remove(); webScanBusy = false;
+    if (window.__onBarcode) window.__onBarcode(code, err);
+  };
+  ov.querySelector('[data-scan-x]').addEventListener('click', () => finish(null, 'canceled'));
+  try {
+    if (!window.Html5Qrcode) await loadScript('vendor/html5-qrcode.min.js');
+    if (done) return;
+    const F = window.Html5QrcodeSupportedFormats;
+    webScanner = new window.Html5Qrcode('scanBox', { verbose: false, formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E], experimentalFeatures: { useBarCodeDetectorIfSupported: true } });
+    await webScanner.start({ facingMode: 'environment' },
+      { fps: 10, qrbox: (w, h) => ({ width: Math.round(Math.min(w * 0.86, 340)), height: Math.round(Math.min(h * 0.42, 170)) }) },
+      text => finish(String(text || '').replace(/\D/g, ''), null), () => { });
+    if (done) { try { await webScanner.stop(); } catch (e) { /* закрыли во время запуска */ } }
+  } catch (e) {
+    const msg = String((e && (e.name || e.message)) || e);
+    finish(null, /NotAllowed|Permission|denied/i.test(msg) ? 'camera' : 'unavailable');
+  }
+}
+let wakeLock = null;
+function webKeepOn(on) {
+  if (NB || !('wakeLock' in navigator)) return;
+  if (on && !wakeLock) navigator.wakeLock.request('screen').then(l => { wakeLock = l; l.addEventListener('release', () => { wakeLock = null; }); }).catch(() => { });
+  if (!on && wakeLock) { wakeLock.release().catch(() => { }); wakeLock = null; }
+}
+if (!NB) {
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { if (keepOn) webKeepOn(true); window.onAppResume(); } });
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => { }); });
+}
+
 const h0 = location.hash.replace('#', '');
 if (['today', 'train', 'progress', 'kb', 'profile'].includes(h0)) ui.tab = h0;
 refreshSteps(); syncPhoneSteps();
 render();
 remApply(true);
-if (S.session) nb('keepScreenOn', true);
+if (S.session) { nb('keepScreenOn', true); webKeepOn(true); }
 document.addEventListener('focusout', () => { setTimeout(() => { if (pendingRender && !ui.sheet && !typing()) render(); }, 60); });
 if (FB.init()) {
   FB.auth.onAuthStateChanged(user => {

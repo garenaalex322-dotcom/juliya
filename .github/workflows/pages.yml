@@ -1,0 +1,44 @@
+name: Веб-версия
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/src/main/assets/**'
+      - 'web/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Скачать Firebase SDK
+        shell: bash
+        run: |
+          mkdir -p app/src/main/assets/vendor
+          for m in app auth firestore; do
+            curl -sSfL -o "app/src/main/assets/vendor/firebase-$m-compat.js" "https://www.gstatic.com/firebasejs/10.14.1/firebase-$m-compat.js"
+          done
+
+      - name: Собрать сайт
+        run: python3 web/build_site.py site "${GITHUB_SHA::8}-${{ github.run_number }}"
+
+      - name: Опубликовать в ветку gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          force_orphan: true
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
