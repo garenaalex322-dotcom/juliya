@@ -43,6 +43,7 @@ const IC = {
   check: sv('<path d="M5.5 12.5l4.2 4.2 8.8-9.4"/>', 20), minus: sv('<path d="M5.5 12h13"/>', 18),
   barcode: sv('<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M8 8.5v7M11 8.5v7M13.5 8.5v7M16 8.5v7"/>', 18),
   edit: sv('<path d="M5 19l1-4.2L15.6 5.2a1.9 1.9 0 0 1 2.7 0l.5.5a1.9 1.9 0 0 1 0 2.7L9.2 18 5 19z"/><path d="M13.8 7l3.2 3.2"/>', 16), chev: sv('<path d="M9.5 6l6 6-6 6"/>', 18),
+  cal: sv('<rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>', 16),
   pause: sv('<path d="M9 6v12M15 6v12"/>', 18), resume: sv('<path d="M8 5.5l11 6.5-11 6.5z"/>', 18),
   play: sv('<path d="M10 4.5h5.5M12.75 4.5v2.2"/><circle cx="12.75" cy="13.5" r="6.8"/><path d="M12.75 10v3.5l2.3 1.6"/>', 18)
 };
@@ -75,7 +76,7 @@ const MEALS = ['Завтрак', 'Обед', 'Ужин', 'Перекус'];
 const ACTS = [['1.2', 'Мало движения, без тренировок'], ['1.375', 'Тренировки 1–3 раза в неделю'], ['1.55', 'Тренировки 3–5 раз в неделю'], ['1.725', 'Почти каждый день или физический труд']];
 const GOALS = [['lose', 'Снизить вес'], ['keep', 'Поддерживать вес'], ['gain', 'Набрать мышцы']];
 const MEAS = [['waist', 'Талия'], ['hips', 'Бёдра'], ['chest', 'Грудь'], ['thigh', 'Бедро'], ['arm', 'Рука (бицепс)']];
-const PERIODS = [[7, 'Неделя'], [30, 'Месяц'], [91, '3 месяца'], [365, 'Год']];
+const PERIODS = [[7, 'Неделя'], [30, 'Месяц'], [91, '3 мес.'], [365, 'Год'], [0, 'Свой']];
 // упражнения из нескольких файлов: собрать по группам в порядке EX_GROUPS (сортировка устойчивая)
 (() => { const order = EX_GROUPS.map(g => g[0]); EXERCISES.sort((a, b) => order.indexOf(a.g) - order.indexOf(b.g)); })();
 const EXM = new Map(EXERCISES.map(e => [e.id, e]));
@@ -345,7 +346,7 @@ function renderToday() {
     ${its.length ? its.map(x => { const v = itemVals(x); return `<button class="item" data-a="openEdit" data-id="${x.id}"><span class="item-name">${esc(x.name)}<small>${x.manual ? 'введено вручную' : f0(x.grams) + ' г'} · Б ${f0(v.p)} · Ж ${f0(v.f)} · У ${f0(v.c)}</small></span><span class="item-kcal">${f0(v.kcal)}</span></button>`; }).join('') : `<p class="empty">Пока пусто</p>`}</section>`;
   }).join('');
   return `<header class="hd"><button class="icon-btn" data-a="dayPrev" aria-label="Предыдущий день">${IC.left}</button>
-    <div class="hd-date"><span class="eyebrow">${WDF[d.getDay()]}</span><strong>${relD(k)}</strong></div>
+    <button class="hd-date" data-a="openCal" data-k="${k}" aria-label="Открыть календарь"><span class="eyebrow">${WDF[d.getDay()]}</span><strong>${relD(k)} ${IC.cal}</strong></button>
     <button class="icon-btn" data-a="dayNext" aria-label="Следующий день" ${k >= t ? 'disabled' : ''}>${IC.right}</button></header>
   ${installBanner()}${demoBanner()}
   ${tg ? '' : `<div class="banner"><p>Укажите возраст, рост и вес, чтобы рассчитать дневную норму.</p><button class="btn btn-ghost btn-sm" data-a="tab" data-tab="profile">Указать</button></div>`}
@@ -692,6 +693,36 @@ function sheetArt() {
 }
 
 /* ================= ПРОГРЕСС ================= */
+/* Периоды в «Прогрессе»: календарные неделя, месяц, 3 месяца, год или свой диапазон; листаются стрелками */
+const MON_N = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+const MON_S = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+const monthEnd = (y, m) => dkey(new Date(y, m + 1, 0));
+function perRange() {
+  const t = todayKey(), a = ui.perAnchor && ui.perAnchor <= t ? ui.perAnchor : t, d = pk(a), y = d.getFullYear(), m = d.getMonth();
+  if (ui.per === 7) { const f = weekStart(a); return { from: f, to: addDays(f, 6) }; }
+  if (ui.per === 30) return { from: dkey(new Date(y, m, 1)), to: monthEnd(y, m) };
+  if (ui.per === 91) return { from: dkey(new Date(y, m - 2, 1)), to: monthEnd(y, m) };
+  if (ui.per === 365) return { from: y + '-01-01', to: y + '-12-31' };
+  let f = ui.perFrom || addDays(t, -13), e = ui.perTo || t; if (e > t) e = t; if (f > e) [f, e] = [e, f];
+  return { from: f, to: e };
+}
+function perLabel(r) {
+  const a = pk(r.from), b = pk(r.to), sy = a.getFullYear() === b.getFullYear();
+  if (ui.per === 30) return MON_N[a.getMonth()] + ' ' + a.getFullYear();
+  if (ui.per === 365) return String(a.getFullYear());
+  if (ui.per === 91) return MON_N[a.getMonth()] + ' – ' + MON_N[b.getMonth()].toLowerCase() + ' ' + b.getFullYear();
+  if (sy && a.getMonth() === b.getMonth()) return `${a.getDate()}–${b.getDate()} ${MON_S[b.getMonth()]} ${b.getFullYear()}`;
+  return `${a.getDate()} ${MON_S[a.getMonth()]}${sy ? '' : ' ' + a.getFullYear()} – ${b.getDate()} ${MON_S[b.getMonth()]} ${b.getFullYear()}`;
+}
+function rangeKeys(from, to) { const t = todayKey(), end = to < t ? to : t, out = []; for (let k = from; k <= end && out.length < 400; k = addDays(k, 1)) out.push(k); return out; }
+function perShift(dir) {
+  const t = todayKey(), a = pk(ui.perAnchor && ui.perAnchor <= t ? ui.perAnchor : t);
+  if (ui.per === 7) a.setDate(a.getDate() + 7 * dir);
+  else if (ui.per === 30) a.setMonth(a.getMonth() + dir, 1);
+  else if (ui.per === 91) a.setMonth(a.getMonth() + 3 * dir, 1);
+  else if (ui.per === 365) a.setFullYear(a.getFullYear() + dir, 0, 1);
+  const k = dkey(a); ui.perAnchor = k > t ? t : k;
+}
 function periodKeys(n) { const t = todayKey(), out = []; for (let i = n - 1; i >= 0; i--) out.push(addDays(t, -i)); return out; }
 const CW = 340;
 function lineChart(id, pts, o) {
@@ -753,15 +784,15 @@ function barChart(id, rows, o) {
   return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.aria || 'Диаграмма')}">${s}${labs}</svg></div>
     <p class="chart-cap" id="cap-${id}">${esc(lr.lab)}: <b>${esc(lr.v > 0 ? fmt(lr.v) + (o.unit ? ' ' + o.unit : '') : 'нет записей')}</b></p>`;
 }
-function exProgress(per) {
+function exProgress(from, to) {
   const counts = new Map();
   S.workouts.forEach(w => w.ex.forEach(e => { if (!e.sets.some(s => s.done)) return; const key = e.exId || ('n:' + e.name); const c = counts.get(key) || { n: 0, name: e.name, exId: e.exId }; c.n++; counts.set(key, c); }));
   if (!counts.size) return `<p class="muted small">Здесь появятся рабочие веса по каждому упражнению.</p>`;
   const opts = [...counts.entries()].sort((a, b) => b[1].n - a[1].n);
   if (!ui.exSel || !counts.has(ui.exSel)) ui.exSel = opts[0][0];
-  const sel = counts.get(ui.exSel), kind = kindOf(sel.exId), from = addDays(todayKey(), -(per - 1));
+  const sel = counts.get(ui.exSel), kind = kindOf(sel.exId);
   const rows = [];
-  S.workouts.filter(w => w.date >= from).sort((a, b) => a.date.localeCompare(b.date)).forEach(w => {
+  S.workouts.filter(w => w.date >= from && w.date <= to).sort((a, b) => a.date.localeCompare(b.date)).forEach(w => {
     const e = w.ex.find(x => (sel.exId && x.exId === sel.exId) || (!sel.exId && x.name === sel.name)); if (!e) return;
     const d = e.sets.filter(s => s.done); if (!d.length) return;
     let v, txt;
@@ -778,9 +809,10 @@ function exProgress(per) {
     ${rows.length ? `<div>${rows.slice(-6).reverse().map(r => `<div class="list-row"><span class="num">${fmtS(r.k)}</span><span class="num muted small" style="text-align:right">${esc(r.sets)}</span></div>`).join('')}</div>` : ''}`;
 }
 function renderProgress() {
-  const per = ui.per, keys = periodKeys(per), from = keys[0], t = todayKey(), tg = targets();
+  const pr = perRange(), keys = rangeKeys(pr.from, pr.to), from = pr.from, t = keys.length ? keys[keys.length - 1] : pr.to, tg = targets();
+  const per = Math.max(1, keys.length), atEnd = pr.to >= todayKey();
   const ws = S.weights.slice().sort((a, b) => a.date.localeCompare(b.date));
-  const wsP = ws.filter(w => w.date >= from);
+  const wsP = ws.filter(w => w.date >= from && w.date <= t);
   const ms = S.measures.slice().sort((a, b) => a.date.localeCompare(b.date));
   // сводка
   const eatRows = keys.map(k => ({ k, v: dayTotals(S.days[k]).kcal }));
@@ -790,8 +822,10 @@ function renderProgress() {
   const stepDays = stepRows.filter(r => r.v > 0), avgSt = stepDays.length ? stepDays.reduce((s, r) => s + r.v, 0) / stepDays.length : 0;
   const woP = S.workouts.filter(w => w.date >= from && w.date <= t);
   let wChange = null; if (wsP.length) { const before = ws.filter(w => w.date < from).pop() || wsP[0]; wChange = wsP[wsP.length - 1].kg - before.kg; }
-  let h = `<header class="hd"><h1>Прогресс</h1></header>${demoBanner()}${segm('per', per, PERIODS, 'Период')}
-  <section class="card"><h2>Сводка за ${per === 7 ? 'неделю' : per === 30 ? 'месяц' : per === 91 ? '3 месяца' : 'год'}</h2>
+  let h = `<header class="hd"><h1>Прогресс</h1><button class="btn btn-ghost btn-sm" data-a="openCal">${IC.cal} Календарь</button></header>${demoBanner()}${segm('per', ui.per, PERIODS, 'Период')}
+  ${ui.per ? `<div class="per-nav"><button class="icon-btn" data-a="perPrev" aria-label="Предыдущий период">${IC.left}</button><b>${esc(perLabel(pr))}</b><button class="icon-btn" data-a="perNext" aria-label="Следующий период" ${atEnd ? 'disabled' : ''}>${IC.right}</button></div>`
+    : `<div class="grid2"><div class="field"><label for="perFrom">С</label><input id="perFrom" class="input" type="date" data-ch="perFrom" value="${pr.from}" max="${todayKey()}"></div><div class="field"><label for="perTo">По</label><input id="perTo" class="input" type="date" data-ch="perTo" value="${pr.to}" max="${todayKey()}"></div></div>`}
+  <section class="card"><h2>Сводка: ${esc(perLabel(pr))}</h2>
     <div class="stats"><div class="stat"><b class="${wChange == null ? '' : wChange < 0 ? 'down' : wChange > 0 ? 'up' : ''}">${wChange == null ? '—' : sgn(wChange) + ' кг'}</b><span>вес</span></div>
     <div class="stat"><b>${logged.length ? f0(avgK) : '—'}</b><span>ккал в день в среднем</span></div>
     <div class="stat"><b>${stepDays.length ? f0(avgSt) : '—'}</b><span>шагов в день в среднем</span></div>
@@ -804,7 +838,7 @@ function renderProgress() {
     ${ws.length ? `<div>${ws.slice(-4).reverse().map(w => `<div class="list-row"><span class="num">${fmtS(w.date)}</span><span class="row"><b class="num">${f1(w.kg)} кг</b><button class="x-btn" data-a="delWeight" data-d="${w.date}" aria-label="Удалить запись">${IC.x}</button></span></div>`).join('')}</div>` : ''}</section>`;
   // замеры
   const mLab = (MEAS.find(x => x[0] === ui.meas) || MEAS[0])[1];
-  const mPts = ms.filter(m => m.date >= from && m[ui.meas] != null && m[ui.meas] !== '').map(m => ({ k: m.date, v: +m[ui.meas], txt: f1(m[ui.meas]) + ' см' }));
+  const mPts = ms.filter(m => m.date >= from && m.date <= t && m[ui.meas] != null && m[ui.meas] !== '').map(m => ({ k: m.date, v: +m[ui.meas], txt: f1(m[ui.meas]) + ' см' }));
   const m0 = ms[0], m1 = ms[ms.length - 1];
   h += `<section class="card"><div class="sec-head"><h2>Замеры, см</h2><button class="btn btn-ghost btn-sm" data-a="openMeasures">Записать замеры</button></div>
     ${m1 ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th></th><th>Старт</th><th>Сейчас</th><th>Разница</th></tr></thead><tbody>${MEAS.map(([k, l]) => { const a = m0[k], b = m1[k]; const ok = a != null && a !== '' && b != null && b !== ''; const dv = ok ? b - a : 0; return `<tr><td>${l}</td><td>${a != null && a !== '' ? f1(a) : '—'}</td><td>${b != null && b !== '' ? f1(b) : '—'}</td><td class="${dv < 0 ? 'down' : dv > 0 ? 'up' : ''}">${ok && ms.length > 1 ? sgn(dv) : '—'}</td></tr>`; }).join('')}</tbody></table></div>
@@ -842,7 +876,7 @@ function renderProgress() {
   h += `<section class="card"><div class="sec-head"><h2>Тренировки по неделям</h2><span class="muted small">план ${S.program.days.length} в неделю</span></div>
     ${barChart('wk', wkRows, { goal: S.program.days.length, goalLab: 'план', color: 'var(--accent)', unit: 'трен.', min: 3, weekly: true, aria: 'Тренировки по неделям' })}</section>`;
   // упражнения
-  h += `<section class="card"><h2>Рабочие веса</h2>${exProgress(per)}</section>`;
+  h += `<section class="card"><h2>Рабочие веса</h2>${exProgress(from, t)}</section>`;
   // дневник по дням
   const jr = keys.slice().reverse().map(k => {
     const d = S.days[k], eat = dayTotals(d).kcal, st = stepsFor(k).n, wo = S.workouts.filter(w => w.date === k), wt = ws.find(w => w.date === k);
@@ -853,7 +887,7 @@ function renderProgress() {
     wo.forEach(w => parts.push(w.dayName + ', ' + f0(w.minutes || 60) + ' мин'));
     if (wt) parts.push('вес ' + f1(wt.kg) + ' кг');
     if (noteOf(k)) parts.push('комментарий тренера');
-    return parts.length ? `<button class="jr" data-a="gotoDay" data-k="${k}"><b class="num">${fmtS(k)}</b><span>${esc(parts.join(' · '))}</span></button>` : '';
+    return parts.length ? `<button class="jr" data-a="dayView" data-k="${k}"><b class="num">${fmtS(k)}</b><span>${esc(parts.join(' · '))}</span></button>` : '';
   }).filter(Boolean).slice(0, 60);
   h += `<section class="card"><h2>Дневник по дням</h2>${jr.length ? `<div>${jr.join('')}</div>` : `<p class="muted small">За этот период записей нет.</p>`}</section>`;
   return h;
@@ -1795,7 +1829,16 @@ const A = {
   kbE(b) { ui.kbE = b.dataset.t; render(); },
   openArt(b) { ui.artId = b.dataset.id; openSheet('art'); },
   /* прогресс */
-  per(b) { ui.per = +b.dataset.v; render(); },
+  per(b) { ui.per = +b.dataset.v; ui.perAnchor = null; render(); },
+  perPrev() { perShift(-1); render(); },
+  perNext() { perShift(1); render(); },
+  openCal(b) { const k = (b && b.dataset.k) || (ui.tab === 'progress' ? perRange().to : ui.date); ui.calM = (k > todayKey() ? todayKey() : k).slice(0, 7); openSheet('cal'); },
+  calPrev() { ui.calM = calShift(ui.calM, -1); renderSheet(); },
+  calNext() { ui.calM = calShift(ui.calM, 1); renderSheet(); },
+  dayView(b) { ui.dayK = b.dataset.k; openSheet('day'); },
+  dayViewPrev() { ui.dayK = addDays(ui.dayK, -1); renderSheet(); $('#sheet').scrollTop = 0; },
+  dayViewNext() { if (ui.dayK < todayKey()) { ui.dayK = addDays(ui.dayK, 1); renderSheet(); $('#sheet').scrollTop = 0; } },
+  dayOpen() { const k = ui.dayK; closeSheet(); ui.date = k; ui.tab = 'today'; render(); window.scrollTo(0, 0); },
   meas(b) { ui.meas = b.dataset.v; render(); },
   tip(b) { const c = $('#cap-' + b.dataset.c); if (c) c.innerHTML = `${esc(b.dataset.d)}: <b>${esc(b.dataset.v)}</b>`; },
   openWeight() { openSheet('weight'); setTimeout(() => { const i = $('#wKg'); if (i) i.focus(); }, 60); },
@@ -1950,7 +1993,9 @@ const CH = {
   pf(el) { mutate(() => { S.profile[el.dataset.f] = el.value; }); const nbx = $('#normBox'); if (nbx) nbx.innerHTML = normHtml(); },
   pfManual(el) { mutate(() => { S.profile.manual = el.checked; }); render(); },
   repDetail(el) { ui.repDetail = el.checked; ui.report = ''; },
-  exSel(el) { ui.exSel = el.value; render(); }
+  exSel(el) { ui.exSel = el.value; render(); },
+  perFrom(el) { if (el.value) { ui.perFrom = el.value; if (!ui.perTo) ui.perTo = perRange().to; render(); } },
+  perTo(el) { if (el.value) { ui.perTo = el.value; if (!ui.perFrom) ui.perFrom = perRange().from; render(); } }
 };
 
 /* ================= Подсказка прогрессии, комментарии тренера, фото прогресса, напоминания ================= */
@@ -2095,7 +2140,7 @@ function weightNear(k, maxDays) {
   for (const w of S.weights) { const d = Math.abs(pk(w.date).getTime() - t) / 864e5; if (d < bd) { bd = d; best = w; } }
   return best && bd <= (maxDays || 14) ? best : null;
 }
-function phRefresh() { if (ui.tab !== 'progress' || (MODE === 'coach' && !CO.cur)) return; if (ui.sheet || typing()) { pendingRender = true; return; } render(); }
+function phRefresh() { if ((ui.sheet === 'cal' || ui.sheet === 'day') && !typing()) { renderSheet(); return; } if (ui.tab !== 'progress' || (MODE === 'coach' && !CO.cur)) return; if (ui.sheet || typing()) { pendingRender = true; return; } render(); }
 function phCardRefresh() { const el = $('#phCard'); if (el) el.outerHTML = photoSection(); }
 const PH = {
   scope: null, list: [], loading: false, cache: new Map(), q: Promise.resolve(), busy: false, again: false,
@@ -2402,6 +2447,63 @@ window.onAppResume = () => {
   if (rest) tickRest();
   if (!ui.sheet) render();
 };
+
+/* ================= Календарь и день целиком ================= */
+const calShift = (m, dir) => { const [y, mo] = m.split('-').map(Number), k = dkey(new Date(y, mo - 1 + dir, 1)).slice(0, 7), now = todayKey().slice(0, 7); return k > now ? now : k; };
+function dayMarks(k) {
+  const kc = dayTotals(S.days[k]).kcal, tg = targets();
+  return { kc, food: kc > 0, lvl: !kc || !tg ? '' : kc > tg.kcal * 1.1 ? 'hi' : kc < tg.kcal * 0.8 ? 'lo' : 'ok',
+    wo: S.workouts.filter(w => w.date === k), body: S.weights.some(w => w.date === k) || S.measures.some(m => m.date === k) || PH.list.some(p => p.date === k),
+    note: !!noteOf(k) || S.workouts.some(w => w.date === k && noteOf('w:' + w.id)) };
+}
+function sheetCal() {
+  const t = todayKey(), m = ui.calM || t.slice(0, 7), [y, mo] = m.split('-').map(Number);
+  const nd = new Date(y, mo, 0).getDate(), lead = (new Date(y, mo - 1, 1).getDay() + 6) % 7;
+  const sc = phScope(); if (sc && PH.scope !== sc) PH.load(sc);
+  let cells = '', nFood = 0, nWo = 0, sumK = 0;
+  for (let i = 0; i < lead; i++) cells += '<span class="cal-c empty" aria-hidden="true"></span>';
+  for (let dd = 1; dd <= nd; dd++) {
+    const k = `${m}-${pad(dd)}`, fut = k > t, mk = fut ? null : dayMarks(k);
+    if (mk && mk.food) { nFood++; sumK += mk.kc; }
+    if (mk) nWo += mk.wo.length;
+    const dots = mk ? (mk.wo.length ? '<i class="cd wo"></i>' : '') + (mk.body ? '<i class="cd wt"></i>' : '') + (mk.note ? '<i class="cd nt"></i>' : '') : '';
+    const bar = mk && mk.food ? `<i class="cb ${mk.lvl}"></i>` : '<i class="cb none"></i>';
+    const lab = `${dd} ${MON[mo - 1]}` + (mk && mk.food ? `, ${f0(mk.kc)} ккал` : '') + (mk && mk.wo.length ? ', тренировка' : '');
+    cells += `<button class="cal-c${k === t ? ' today' : ''}" data-a="dayView" data-k="${k}" ${fut ? 'disabled' : ''} aria-label="${lab}"><span class="cal-n">${dd}</span>${bar}<span class="cal-d">${dots}</span></button>`;
+  }
+  const atEnd = m >= t.slice(0, 7);
+  return `${sheetHead('Календарь')}
+    <div class="per-nav"><button class="icon-btn" data-a="calPrev" aria-label="Предыдущий месяц">${IC.left}</button><b>${MON_N[mo - 1]} ${y}</b><button class="icon-btn" data-a="calNext" aria-label="Следующий месяц" ${atEnd ? 'disabled' : ''}>${IC.right}</button></div>
+    <div class="cal"><div class="cal-wd">${['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(w => `<span>${w}</span>`).join('')}</div><div class="cal-g">${cells}</div></div>
+    <p class="small">${nFood ? `Еда записана ${nFood} ${plural(nFood, 'день', 'дня', 'дней')}, в среднем ${f0(sumK / nFood)} ккал` : 'Еды за месяц не записано'} · ${nWo} ${plural(nWo, 'тренировка', 'тренировки', 'тренировок')}</p>
+    <div class="cal-leg"><span class="cal-lh">Еда:</span><span><i class="cb ok"></i>в норме</span><span><i class="cb hi"></i>больше нормы</span><span><i class="cb lo"></i>заметно меньше</span></div>
+    <div class="cal-leg"><span><i class="cd wo"></i>тренировка</span><span><i class="cd wt"></i>вес, замеры или фото</span><span><i class="cd nt"></i>комментарий тренера</span></div>
+    <p class="hint">Нажмите на день, чтобы увидеть всё, что в нём было.</p>`;
+}
+function sheetDay() {
+  const t = todayKey(), k = ui.dayK && ui.dayK <= t ? ui.dayK : t, dt = pk(k), d = S.days[k], tot = dayTotals(d), tg = targets();
+  const st = stepsFor(k), b = burnFor(k), wo = S.workouts.filter(w => w.date === k), wt = S.weights.find(w => w.date === k), ms = S.measures.find(m => m.date === k), nt = noteOf(k);
+  const sc = phScope(); if (sc && PH.scope !== sc) PH.load(sc);
+  const phs = PH.list.filter(p => p.date === k), items = (d && d.items) || [];
+  const title = WDF[dt.getDay()].replace(/^./, c => c.toUpperCase()) + ', ' + fmtD(k) + (dt.getFullYear() !== pk(t).getFullYear() ? ' ' + dt.getFullYear() : '');
+  const meals = MEALS.map(m => {
+    const its = items.filter(x => x.meal === m); if (!its.length) return '';
+    const mk = its.reduce((s, x) => s + itemVals(x).kcal, 0);
+    return `<div class="dv-meal"><div class="dv-mh"><b>${m}</b><span class="num muted">${f0(mk)} ккал</span></div>${its.map(x => { const v = itemVals(x); return `<div class="dv-row"><span>${esc(x.name)}<small>${x.manual ? 'введено вручную' : f0(x.grams) + ' г'}</small></span><span class="num">${f0(v.kcal)}</span></div>`; }).join('')}</div>`;
+  }).join('');
+  const water = (d && d.water) || 0;
+  let h = `${sheetHead(title)}
+    <div class="per-nav"><button class="icon-btn" data-a="dayViewPrev" aria-label="Предыдущий день">${IC.left}</button><b>${relD(k)}</b><button class="icon-btn" data-a="dayViewNext" aria-label="Следующий день" ${k >= t ? 'disabled' : ''}>${IC.right}</button></div>`;
+  if (nt) h += `<div class="note-card note-in"><div class="note-hd">${IC.msg}<b>Комментарий тренера</b><span class="small muted">${esc(noteWhen(nt.ts))}</span></div><p class="note-text">${esc(nt.t)}</p></div>`;
+  h += `<section class="dv-sec"><h3>Питание</h3>${items.length ? `<div class="stats three"><div class="stat"><b>${f0(tot.kcal)}</b><span>ккал${tg ? ' из ' + f0(tg.kcal) : ''}</span></div><div class="stat"><b>${f0(tot.p)}</b><span>белки, г${tg ? ' из ' + f0(tg.p) : ''}</span></div><div class="stat"><b>${f0(tot.f)} / ${f0(tot.c)}</b><span>жиры / углеводы, г</span></div></div>${meals}` : `<p class="muted small">Еда не записана.</p>`}</section>`;
+  h += `<section class="dv-sec"><h3>Активность</h3><div class="stats three"><div class="stat"><b>${st.n ? f0(st.n) : '—'}</b><span>шагов</span></div><div class="stat"><b>${water ? f1(water / 1000) : '—'}</b><span>воды, л</span></div><div class="stat"><b>${b ? f0(b.total) : '—'}</b><span>расход, ккал</span></div></div>${b && items.length ? `<p class="small muted">${tot.kcal < b.total ? 'Дефицит' : 'Профицит'} ≈ ${f0(Math.abs(b.total - tot.kcal))} ккал</p>` : ''}</section>`;
+  h += `<section class="dv-sec"><h3>Тренировки</h3>${wo.length ? wo.map(w => { const wn = noteOf('w:' + w.id); return `<div class="dv-wo"><div class="dv-mh"><b>${esc(w.dayName)}</b><span class="num muted">${f0(w.minutes || 60)} мин</span></div>${w.ex.map(e => `<div class="dv-row"><span>${esc(e.name)}</span><span class="num muted small">${esc(setsText(e.sets, kindOf(e.exId)) || '—')}</span></div>`).join('')}${w.note ? `<p class="small muted">Заметка: ${esc(w.note)}</p>` : ''}${wn ? `<p class="small"><b>Тренер:</b> ${esc(wn.t)}</p>` : ''}<button class="btn-link" data-a="openWorkout" data-id="${esc(w.id)}">Подробнее</button></div>`; }).join('') : `<p class="muted small">Тренировок не было.</p>`}</section>`;
+  if (wt || ms) h += `<section class="dv-sec"><h3>Вес и замеры</h3>${wt ? `<p>Вес <b class="num">${f1(wt.kg)} кг</b></p>` : ''}${ms ? `<div class="dv-meas">${MEAS.filter(([mk]) => ms[mk] != null && ms[mk] !== '').map(([mk, l]) => `<span>${esc(l)} <b class="num">${f1(ms[mk])}</b></span>`).join('')}</div>` : ''}</section>`;
+  if (phs.length) h += `<section class="dv-sec"><h3>Фото прогресса</h3><div class="ph-grid">${phs.map(m => `<div class="ph-it"><button class="ph-th" data-a="phTap" data-id="${esc(m.id)}" aria-label="Фото за ${fmtD(m.date)}">${m.thumb ? `<img src="${esc(m.thumb)}" alt="">` : ''}${m.view ? `<span class="ph-cap">${phViewName(m.view)}</span>` : ''}</button></div>`).join('')}</div></section>`;
+  h += `<button class="btn btn-primary" data-a="dayOpen">${k === t ? 'Открыть сегодня' : 'Открыть этот день для записей'}</button>`;
+  return h;
+}
+Object.assign(SHEETS, { cal: sheetCal, day: sheetDay });
 
 /* ================= Веб-версия: айфон и браузер ================= */
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
