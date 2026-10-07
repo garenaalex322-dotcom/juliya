@@ -385,3 +385,8 @@ button.hd-date{border:0;background:none;color:var(--fg);cursor:pointer;padding:2
 .dv-row small{display:block;color:var(--muted);font-size:12px}
 .dv-row .num{white-space:nowrap;text-align:right}
 .dv-meas{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:14px}
+
+/* переключатель «Мой дневник / Тренер» */
+.mode-sw button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;font-size:14px}
+.mode-sw svg{width:18px;height:18px;flex:none}
+.coachbar .icon-btn{flex:none}

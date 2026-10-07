@@ -274,7 +274,7 @@ async function copyText(text, ta) {
 function demoBanner() {
   if (MODE === 'coach') return coachBar();
   if (S.demo) return `<div class="banner"><p>Это пример заполненного дневника, чтобы было видно, как всё работает. Ваши записи начнутся с чистого листа.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="startFresh">Начать свой дневник</button><button class="btn btn-ghost btn-sm" data-a="tab" data-tab="profile">У меня есть код тренера</button></div></div>`;
-  if (!S.link && window.firebase && ui.tab === 'today' && !lsGet('tarelka-hide-link')) return `<div class="banner"><p>Есть код от тренера? Подключитесь, и тренер будет видеть ваш дневник.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="tab" data-tab="profile">Ввести код</button><button class="btn-link" data-a="hideLink">Позже</button></div></div>`;
+  if (!S.link && window.firebase && ui.tab === 'today' && !lsGet('tarelka-hide-link') && !coachKnown()) return `<div class="banner"><p>Есть код от тренера? Подключитесь, и тренер будет видеть ваш дневник.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="tab" data-tab="profile">Ввести код</button><button class="btn-link" data-a="hideLink">Позже</button></div></div>`;
   if (S.link && Sync.status === 'lost' && ui.tab === 'today') return `<div class="banner plain"><p>${esc(syncText())}</p><button class="btn btn-ghost btn-sm" data-a="tab" data-tab="profile">Открыть «Профиль»</button></div>`;
   if (!storageOk) return `<div class="banner plain"><p>Записи сейчас не сохраняются: память приложения недоступна. Сделайте резервную копию в «Профиле».</p></div>`;
   return '';
@@ -283,6 +283,9 @@ function tabsHtml() {
   const T = [['today', 'Сегодня', IC.plate], ['train', 'Тренировки', IC.dumbbell], ['progress', 'Прогресс', IC.chart], ['kb', 'База знаний', IC.book], ['profile', 'Профиль', IC.user]];
   return T.map(([id, l, ic]) => `<button class="tab" data-a="tab" data-tab="${id}" ${ui.tab === id ? 'aria-current="page"' : ''}>${ic}<span>${l}</span></button>`).join('');
 }
+// переключатель «Мой дневник / Тренер»: виден, если на этом телефоне уже входили как тренер
+const coachKnown = () => MODE === 'coach' || lsGet('tarelka-coach-used') === '1';
+const modeSwitch = () => coachKnown() ? `<div class="segm mode-sw" role="group" aria-label="Режим"><button data-a="toClient" aria-pressed="${MODE !== 'coach'}">${IC.user}<span>Мой дневник</span></button><button data-a="toCoach" aria-pressed="${MODE === 'coach'}">${IC.dumbbell}<span>Тренер</span></button></div>` : '';
 const segm = (act, cur, list, label) => `<div class="segm" role="group" aria-label="${esc(label)}">${list.map(([v, l]) => `<button data-a="${act}" data-v="${esc(v)}" aria-pressed="${String(cur) === String(v)}">${esc(l)}</button>`).join('')}</div>`;
 
 /* ================= СЕГОДНЯ ================= */
@@ -954,7 +957,7 @@ function buildReport(n, detail) {
 function renderProfile() {
   const p = S.profile, opt = (arr, v) => arr.map(([k, l]) => `<option value="${k}" ${String(v) === k ? 'selected' : ''}>${l}</option>`).join('');
   const coachMode = MODE === 'coach';
-  return `<header class="hd"><h1>Профиль</h1></header>${demoBanner()}
+  return `<header class="hd"><h1>Профиль</h1></header>${coachMode ? '' : modeSwitch()}${demoBanner()}
   ${linkCard()}
   <section class="card"><h2>Данные и норма</h2>
     <div class="grid2">
@@ -1264,6 +1267,7 @@ const Coach = {
     if (FB.auth.currentUser) await FB.auth.signOut();
     const cred = create ? await FB.auth.createUserWithEmailAndPassword(email, pass) : await FB.auth.signInWithEmailAndPassword(email, pass);
     if (create) await FB.db.collection('coaches').doc(cred.user.uid).set({ email, createdAt: Date.now() }, { merge: true });
+    lsSet('tarelka-coach-used', '1');
   },
   load() {
     const uid = CO.user.uid;
@@ -1323,7 +1327,7 @@ const Coach = {
 };
 function coachBar() {
   const c = CO.clients.find(x => x.id === CO.cur);
-  return `<div class="coachbar"><span class="grow"><b>${esc(c ? c.name : 'Подопечная')}</b><span class="small muted" id="syncLine" style="display:block">${esc(syncText())}</span></span><button class="btn btn-ghost btn-sm" data-a="coachBack">Все подопечные</button></div>`;
+  return `<div class="coachbar"><span class="grow"><b>${esc(c ? c.name : 'Подопечная')}</b><span class="small muted" id="syncLine" style="display:block">${esc(syncText())}</span></span><button class="btn btn-ghost btn-sm" data-a="coachBack">Все подопечные</button><button class="icon-btn" data-a="toClient" aria-label="Мой дневник" title="Мой дневник">${IC.user}</button></div>`;
 }
 function renderCoach() {
   const back = `<button class="btn-link" data-a="toClient">Перейти в режим дневника</button>`;
@@ -1345,7 +1349,7 @@ function renderCoach() {
     ${CO.confirm === 'del:' + c.id ? `<div class="confirm"><p>Удалить карточку «${esc(c.name)}»? У тренера пропадёт доступ к её дневнику, у неё на телефоне записи останутся.</p><div class="row"><button class="btn btn-warn btn-sm" data-a="coDelYes" data-id="${c.id}">Удалить</button><button class="btn-link" data-a="coNo">Отмена</button></div></div>`
       : CO.confirm === 'code:' + c.id ? `<div class="confirm"><p>Выдать новый код? Старый перестанет работать, а телефон подопечной отключится, пока она не введёт новый.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="coNewCodeYes" data-id="${c.id}">Выдать код</button><button class="btn-link" data-a="coNo">Отмена</button></div></div>`
       : `<div class="row"><button class="btn-link" data-a="coNewCode" data-id="${c.id}">Новый код</button><button class="btn-link warn-text" data-a="coDel" data-id="${c.id}">Удалить</button></div>`}</section>`).join('');
-  return `<header class="hd"><h1>Мои подопечные</h1></header>
+  return `<header class="hd"><h1>Мои подопечные</h1></header>${modeSwitch()}
     ${CO.err ? `<div class="banner plain"><p>${esc(CO.err)}</p></div>` : ''}
     ${!CO.ready ? '<p class="muted">Загружаю список…</p>' : list || '<p class="muted">Пока никого нет. Добавьте первую подопечную.</p>'}
     <section class="card"><h2>Новая подопечная</h2><div class="row"><input id="coNewName" class="input grow" placeholder="Имя" autocomplete="off"><button class="btn btn-primary" data-a="coAdd" ${CO.busy ? 'disabled' : ''}>Добавить</button></div>
@@ -1358,7 +1362,7 @@ function linkCard() {
   if (!S.link) {
     return `<section class="card"><h2>Тренер</h2><p class="small muted">Введите код, который прислал тренер. Тренер будет видеть ваш дневник, а программа тренировок будет обновляться сама.</p>
       <div class="row"><input id="linkCode" class="input grow code-in" placeholder="Например, K7M2QX" autocomplete="off" autocapitalize="characters" maxlength="12"><button class="btn btn-primary" data-a="linkCode" ${ui.linkBusy ? 'disabled' : ''}>${ui.linkBusy ? 'Подключаю…' : 'Подключиться'}</button></div>
-      <button class="btn-link" data-a="toCoach">Я тренер — войти</button></section>`;
+      ${coachKnown() ? '' : `<button class="btn-link" data-a="toCoach">Я тренер — войти</button>`}</section>`;
   }
   return `<section class="card"><div class="sec-head"><h2>Тренер</h2><span class="pill ${Sync.status === 'ok' ? 'ok' : Sync.status === 'lost' ? 'warn' : ''}">${Sync.status === 'lost' ? 'нет связи' : 'подключено'}</span></div>
     <p class="small muted" id="syncLine">${esc(syncText())}</p>
@@ -1906,12 +1910,18 @@ const A = {
   unlink() { ui.confirm = 'unlink'; render(); },
   unlinkYes() { Sync.stop(); lsSet(KEY + '-sh-client-' + (S.link && S.link.clientId), null); delete S.link; save(); if (FB.ok) FB.auth.signOut().catch(() => { }); ui.confirm = null; render(); toast('Связь с тренером отключена'); },
   toCoach() {
+    if (MODE === 'coach') return;
     if (S.link) { toast('Этот телефон подключён к тренеру как телефон подопечной. Сначала отключитесь в «Профиле».'); return; }
     MODE = 'coach'; lsSet('tarelka-mode', 'coach'); S = blankState(); CO.err = ''; stopRest(); ui.sheet = null; renderSheet();
     if (FB.init()) { const u = FB.auth.currentUser; if (u && u.isAnonymous) FB.auth.signOut().catch(() => { }); else if (u && !CO.user) { CO.user = u; Coach.load(); } }
     render(); window.scrollTo(0, 0);
   },
-  toClient() { Sync.stop(); stopRest(); if (CO.unsub) { CO.unsub(); CO.unsub = null; } CO.cur = null; CO.user = null; CO.ready = false; MODE = 'client'; lsSet('tarelka-mode', 'client'); S = migrate(loadState()) || demoState(); Object.assign(ui, { tab: 'today', date: todayKey(), confirm: null }); if (FB.ok && FB.auth.currentUser && !FB.auth.currentUser.isAnonymous) FB.auth.signOut().catch(() => { }); render(); window.scrollTo(0, 0); },
+  toClient() { if (MODE !== 'coach') return; Sync.stop(); stopRest(); if (CO.unsub) { CO.unsub(); CO.unsub = null; } CO.cur = null; CO.user = null; CO.ready = false; MODE = 'client'; lsSet('tarelka-mode', 'client'); S = migrate(loadState()) || demoState(); Object.assign(ui, { tab: 'today', date: todayKey(), confirm: null, sheet: null }); renderSheet();
+    // вход тренера сохраняем: свой дневник работает без него. Выходим, только если свой дневник сам подключён к тренеру
+    const u = FB.ok && FB.auth.currentUser;
+    if (u && !u.isAnonymous) { if (S.link) FB.auth.signOut().catch(() => { }); else lsSet('tarelka-coach-used', '1'); }
+    refreshSteps(); syncPhoneSteps(); remApply(true);
+    render(); window.scrollTo(0, 0); toast('Мой дневник'); },
   async coLogin(b, e, create) {
     const email = ($('#coEmail').value || '').trim(), pass = $('#coPass').value || '';
     ui.coEmail = email;
