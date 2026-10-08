@@ -390,3 +390,4 @@ button.hd-date{border:0;background:none;color:var(--fg);cursor:pointer;padding:2
 .mode-sw button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;font-size:14px}
 .mode-sw svg{width:18px;height:18px;flex:none}
 .coachbar .icon-btn{flex:none}
+.next-day{border-color:var(--accent)}

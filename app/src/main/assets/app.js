@@ -499,10 +499,12 @@ function setsText(sets, kind) {
   if (ws.every(w => w === ws[0])) return (ws[0] ? ws[0] + ' кг × ' : '') + d.map(s => s.r || '?').join(', ');
   return d.map((s, i) => (ws[i] ? ws[i] + '×' : '') + (s.r || '?')).join(', ');
 }
+// сколько тренировок в неделю по плану: отдельно от числа дней в программе (дни могут чередоваться по неделям)
+const perWeek = () => clamp(Math.round(+S.program.perWeek || S.program.days.length || 3), 1, 7);
 function weekCard() {
   const t = todayKey(), ws = weekStart(t), dates = new Set(S.workouts.map(w => w.date));
   let week = ''; for (let i = 0; i < 7; i++) { const k = addDays(ws, i); week += `<div class="wd${k === t ? ' today' : ''}"><b>${WDS[pk(k).getDay()]}</b><i class="${dates.has(k) ? 'on' : ''}">${dates.has(k) ? '✓' : ''}</i></div>`; }
-  const n = S.workouts.filter(w => w.date >= ws && w.date <= addDays(ws, 6)).length, goal = S.program.days.length;
+  const n = S.workouts.filter(w => w.date >= ws && w.date <= addDays(ws, 6)).length, goal = perWeek();
   return `<section class="card"><div class="sec-head"><h2>Эта неделя</h2><span class="pill${n >= goal ? ' ok' : ''}">${n} из ${goal}</span></div><div class="week">${week}</div></section>`;
 }
 function setRow(i, j, s, kind, pe) {
@@ -542,7 +544,8 @@ function sessionCard() {
 function progEditor() {
   const P = S.program;
   let h = `<section class="card"><div class="field"><label for="progTitle">Название программы</label><input id="progTitle" class="input" data-in="progTitle" value="${esc(P.title)}"></div>
-    <div class="field"><label for="progNote">Пояснение</label><input id="progNote" class="input" data-in="progNote" value="${esc(P.note || '')}"></div></section>`;
+    <div class="field"><label for="progNote">Пояснение</label><input id="progNote" class="input" data-in="progNote" value="${esc(P.note || '')}"></div>
+    <div class="field"><label for="progPerWeek">Тренировок в неделю</label><select id="progPerWeek" class="input" data-ch="progPerWeek">${[1, 2, 3, 4, 5, 6, 7].map(n => `<option value="${n}" ${perWeek() === n ? 'selected' : ''}>${n}</option>`).join('')}</select><span class="hint">Если дней в программе больше, они идут по кругу: например, 4 дня при 2 тренировках в неделю — чередование недель.</span></div></section>`;
   P.days.forEach((d, di) => {
     h += `<section class="card"><div class="field"><label for="dn${di}">Название дня</label><input id="dn${di}" class="input" data-in="dayName" data-d="${di}" value="${esc(d.name)}"></div>
       <div class="row small muted" style="justify-content:flex-end;gap:0"><span style="width:58px;text-align:center">подходы</span><span style="width:82px;text-align:center">повторы</span></div>
@@ -566,10 +569,12 @@ function renderTrain() {
   else {
     h += `<section class="card"><div><h2>${esc(P.title)}</h2>${P.note ? `<p class="small muted">${esc(P.note)}</p>` : ''}</div>
       <div class="row"><button class="btn btn-ghost btn-sm" data-a="progEdit">Изменить</button><button class="btn btn-ghost btn-sm" data-a="openTemplates">Шаблоны</button><button class="btn btn-ghost btn-sm" data-a="openImport">Код программы</button></div></section>`;
+    const nx = P.days.length > 1 ? nextProgDay() : null;
     P.days.forEach(d => {
-      h += `<section class="card"><div class="sec-head"><h2>${esc(d.name)}</h2><span class="muted small">${d.ex.length} ${plural(d.ex.length, 'упражнение', 'упражнения', 'упражнений')}</span></div>
+      const isNext = nx && nx.id === d.id;
+      h += `<section class="card${isNext ? ' next-day' : ''}"><div class="sec-head"><h2>${esc(d.name)}</h2>${isNext ? '<span class="pill ok">следующая</span>' : `<span class="muted small">${d.ex.length} ${plural(d.ex.length, 'упражнение', 'упражнения', 'упражнений')}</span>`}</div>
         <div>${d.ex.map(e => `<div class="ex"><button class="ex-name" data-a="exInfo" data-id="${esc(e.exId || '')}">${esc(e.name)}</button><span class="scheme">${esc(schemeText(e))}</span></div>`).join('')}</div>
-        ${S.session ? '' : `<button class="btn btn-primary" data-a="startDay" data-id="${esc(d.id)}">Начать «${esc(d.name)}»</button>`}</section>`;
+        ${S.session ? '' : `<button class="btn ${nx && !isNext ? 'btn-ghost' : 'btn-primary'}" data-a="startDay" data-id="${esc(d.id)}">Начать «${esc(d.name)}»</button>`}</section>`;
     });
     if (!S.session) h += `<button class="btn btn-ghost" data-a="startFree">Записать другую тренировку</button>`;
   }
@@ -876,8 +881,8 @@ function renderProgress() {
   // тренировки по неделям
   const nW = Math.max(4, Math.ceil(per / 7)), wk0 = weekStart(t), wkRows = [];
   for (let i = nW - 1; i >= 0; i--) { const s = addDays(wk0, -7 * i), e = addDays(s, 6); wkRows.push({ k: s, v: S.workouts.filter(w => w.date >= s && w.date <= e).length, lab: 'неделя с ' + fmtDM(s) }); }
-  h += `<section class="card"><div class="sec-head"><h2>Тренировки по неделям</h2><span class="muted small">план ${S.program.days.length} в неделю</span></div>
-    ${barChart('wk', wkRows, { goal: S.program.days.length, goalLab: 'план', color: 'var(--accent)', unit: 'трен.', min: 3, weekly: true, aria: 'Тренировки по неделям' })}</section>`;
+  h += `<section class="card"><div class="sec-head"><h2>Тренировки по неделям</h2><span class="muted small">план ${perWeek()} в неделю</span></div>
+    ${barChart('wk', wkRows, { goal: perWeek(), goalLab: 'план', color: 'var(--accent)', unit: 'трен.', min: 3, weekly: true, aria: 'Тренировки по неделям' })}</section>`;
   // упражнения
   h += `<section class="card"><h2>Рабочие веса</h2>${exProgress(from, t)}</section>`;
   // дневник по дням
@@ -1767,7 +1772,7 @@ const A = {
   finishYes() {
     const s = S.session; if (!s) return; const min = clamp(Math.round(toNum($('#finMin').value) || 60), 1, 600);
     mutate(() => {
-      S.workouts.push({ id: s.id || uid(), date: s.date || todayKey(), dayId: s.dayId, dayName: s.dayName, note: (s.note || '').trim(), minutes: min, author: MODE === 'coach' ? 'coach' : 'client',
+      S.workouts.push({ id: s.id || uid(), date: s.date || todayKey(), ts: s.start || Date.now(), dayId: s.dayId, dayName: s.dayName, note: (s.note || '').trim(), minutes: min, author: MODE === 'coach' ? 'coach' : 'client',
         ex: s.ex.map(e => ({ exId: e.exId, name: e.name, target: e.target, sets: e.sets.filter(x => x.done).map(x => ({ w: x.w || '', r: x.r || '', done: true })) })).filter(e => e.sets.length) });
       S.session = null;
     });
@@ -1793,7 +1798,7 @@ const A = {
   dayAdd() { mutate(() => { const used = new Set(S.program.days.map(d => d.name)); let nm = 'Новый день'; for (const c of 'АБВГДЕЖЗ') { if (!used.has('День ' + c)) { nm = 'День ' + c; break; } } S.program.days.push({ id: uid(), name: nm, ex: [] }); }); render(); },
   dayDel(b) { ui.confirm = 'delDay' + b.dataset.d; render(); },
   dayDelYes(b) { const di = +b.dataset.d; mutate(() => { S.program.days.splice(di, 1); }); ui.confirm = null; render(); },
-  progExport() { ui.progCode = 'PRG2:' + b64e(JSON.stringify({ title: S.program.title, note: S.program.note, days: S.program.days, customEx: (S.customEx || []) })); render(); },
+  progExport() { ui.progCode = 'PRG2:' + b64e(JSON.stringify({ title: S.program.title, note: S.program.note, perWeek: S.program.perWeek || null, days: S.program.days, customEx: (S.customEx || []) })); render(); },
   copyProg() { copyText(ui.progCode, $('#progCodeTa')); },
   openTemplates() { ui.tplId = null; openSheet('templates'); },
   tplPick(b) { ui.tplId = b.dataset.id; renderSheet(); },
@@ -1810,6 +1815,7 @@ const A = {
   progImportYes() {
     const p = ui.pendingImport; if (!p) return;
     mutate(() => { S.program = { title: String(p.title || 'Программа от тренера'), note: String(p.note || ''), days: p.days };
+      if (+p.perWeek > 0) S.program.perWeek = clamp(Math.round(+p.perWeek), 1, 7);
       (p.customEx || []).forEach(c => { if (c && c.id && !S.customEx.some(x => x.id === c.id)) S.customEx.push(c); }); });
     ui.pendingImport = null; ui.confirm = null; ui.sheet = null; renderSheet(); render(); toast('Программа загружена');
   },
@@ -2004,6 +2010,7 @@ const CH = {
   pfManual(el) { mutate(() => { S.profile.manual = el.checked; }); render(); },
   repDetail(el) { ui.repDetail = el.checked; ui.report = ''; },
   exSel(el) { ui.exSel = el.value; render(); },
+  progPerWeek(el) { mutate(() => { S.program.perWeek = clamp(+el.value || 2, 1, 7); }); },
   perFrom(el) { if (el.value) { ui.perFrom = el.value; if (!ui.perTo) ui.perTo = perRange().to; render(); } },
   perTo(el) { if (el.value) { ui.perTo = el.value; if (!ui.perFrom) ui.perFrom = perRange().from; render(); } }
 };
@@ -2284,7 +2291,7 @@ const WD_ISO = [[1, 'Пн'], [2, 'Вт'], [3, 'Ср'], [4, 'Чт'], [5, 'Пт'],
 const ALL_DAYS = [1, 2, 3, 4, 5, 6, 7], REM_KEYS = ['water', 'train', 'weigh', 'measure'];
 const remOk = () => !!(NB && typeof NB.setReminders === 'function');
 let notifSt = null;
-const remDefDays = () => [[1], [1, 4], [1, 3, 5], [1, 2, 4, 5], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6], ALL_DAYS][clamp(S.program.days.length || 3, 1, 7) - 1].slice();
+const remDefDays = () => [[1], [1, 4], [1, 3, 5], [1, 2, 4, 5], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6], ALL_DAYS][perWeek() - 1].slice();
 function remCfg() {
   const r = lsJson(RKEY) || {}, o = (d, x) => Object.assign(d, x && typeof x === 'object' ? x : {});
   const c = { water: o({ on: false, every: 2, from: '10:00', to: '20:00' }, r.water), train: o({ on: false, days: null, time: '18:00' }, r.train),
@@ -2295,7 +2302,9 @@ function remCfg() {
 const hmOf = (t, d) => { const m = String(t || '').match(/^(\d{1,2}):(\d{2})/); return m ? [clamp(+m[1], 0, 23), clamp(+m[2], 0, 59)] : d; };
 function nextProgDay() {
   const P = S.program.days; if (!P.length) return null;
-  const last = S.workouts.filter(w => P.some(d => d.id === w.dayId)).sort((a, b) => b.date.localeCompare(a.date))[0];
+  // последняя тренировка по программе: по дате, при равной дате — по времени начала, затем по порядку записи
+  const last = S.workouts.map((w, i) => [w, i]).filter(([w]) => P.some(d => d.id === w.dayId))
+    .sort(([a, ia], [b, ib]) => b.date.localeCompare(a.date) || (b.ts || 0) - (a.ts || 0) || ib - ia).map(([w]) => w)[0];
   return last ? P[(P.findIndex(d => d.id === last.dayId) + 1) % P.length] : P[0];
 }
 function remList(c) {
