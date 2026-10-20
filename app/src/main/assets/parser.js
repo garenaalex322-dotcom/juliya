@@ -101,9 +101,29 @@ function matchAlias(alias, words) {
   if (alias.length === 1 && words[idx[0]] === alias[0]) score += 1;
   return { idx, score };
 }
+// Индекс синонимов по первым буквам первой основы: в базе тысячи продуктов,
+// поэтому проверяем только те синонимы, чья первая основа может совпасть с каким-то словом.
+// Порядок перебора тот же, что и при полном переборе (сначала свои продукты, потом база).
+let aliasIdx = null;
+function buildIdx(list, ord) {
+  const m = new Map();
+  for (const food of list) for (const al of food.aliases) {
+    const k = String(al[0] || '').slice(0, 3);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push({ food, al, ord: ord++ });
+  }
+  return m;
+}
+function candidates(words) {
+  if (!aliasIdx) aliasIdx = buildIdx(FOODS, 1e7);
+  const idx = [buildIdx(customFoods(), 0), aliasIdx], keys = new Set(), out = [];
+  for (const w of words) for (let n = 1; n <= 3 && n <= w.length; n++) keys.add(w.slice(0, n));
+  for (const m of idx) for (const k of keys) { const l = m.get(k); if (l) for (const e of l) out.push(e); }
+  return out.sort((a, b) => a.ord - b.ord);
+}
 function bestMatch(words) {
   let best = null;
-  for (const food of allFoods()) for (const al of food.aliases) {
+  for (const { food, al } of candidates(words)) {
     const m = matchAlias(al, words);
     if (!m) continue;
     const sc = m.score + (food.custom && al.length > 1 ? 3 : 0);
@@ -184,6 +204,7 @@ function parseText(text) {
   return { items, unknown };
 }
 
+const wordsOf = s => ' ' + s.replace(/[^а-яa-z0-9]+/g, ' ');
 function searchFoods(q) {
   const words = tokenize(prep(q));
   if (!words.length) return [];
@@ -192,12 +213,21 @@ function searchFoods(q) {
   for (const food of allFoods()) {
     let sc = 0;
     const nm = normTxt(food.name);
-    if (nm.startsWith(qn)) sc = 100; else if (nm.includes(qn)) sc = 60;
+    // совпадение с началом названия или с началом слова в нём («кола» не должна находить «шоколад»)
+    if (nm.startsWith(qn)) sc = 100; else if (wordsOf(nm).includes(' ' + wordsOf(qn).trim())) sc = 60;
     for (const al of food.aliases) {
-      const ok = al.every(st => words.some(w => w.startsWith(st) || (w.length >= 3 && st.startsWith(w))));
-      if (ok) sc = Math.max(sc, 40 + al.length);
+      const hit = (w, st) => w.startsWith(st) || (w.length >= 3 && st.startsWith(w));
+      const ok = al.every(st => words.some(w => hit(w, st)));
+      // синоним покрывает весь запрос («сникерс» → батончик Snickers) — выше, чем просто вхождение в название
+      if (!ok) continue;
+      const cover = f => words.every(w => STOP.has(w) || al.some(st => f(w, st)));
+      sc = Math.max(sc, (cover((w, st) => w.startsWith(st)) ? 80 : cover(hit) ? 70 : 40) + al.length);
+      // запрос из одного слова — это и есть основной синоним продукта («сыр», «кефир», «молоко»): общий продукт первым
+      if (words.length === 1 && al.length === 1 && (words[0] === al[0] || (al[0].length >= 4 && words[0].startsWith(al[0]) && words[0].length - al[0].length <= 2))) sc = Math.max(sc, 101);
     }
     if (sc) scored.push([sc, food]);
   }
-  return scored.sort((a, b) => b[0] - a[0] || a[1].name.localeCompare(b[1].name, 'ru')).slice(0, 8).map(x => x[1]);
+  // при равенстве: сначала общие продукты, потом марки; короче название — выше
+  const brand = f => (/[«a-z]/i.test(f.name) ? 1 : 0);
+  return scored.sort((a, b) => b[0] - a[0] || brand(a[1]) - brand(b[1]) || a[1].name.length - b[1].name.length || a[1].name.localeCompare(b[1].name, 'ru')).slice(0, 8).map(x => x[1]);
 }
