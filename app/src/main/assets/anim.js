@@ -9,7 +9,7 @@ const ANIM = (() => {
   const lerp = (a, b, t) => a + (b - a) * t;
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
-  function ik(root, target, l1, l2, pref) {
+  function ik(root, target, l1, l2, pref, near) {
     let dx = target[0] - root[0], dy = target[1] - root[1], d = Math.hypot(dx, dy) || 0.001;
     const max = l1 + l2 - 0.05, min = Math.abs(l1 - l2) + 0.05;
     let t = target;
@@ -20,6 +20,11 @@ const ANIM = (() => {
     const j2 = [root[0] + l1 * Math.cos(base - c), root[1] + l1 * Math.sin(base - c)];
     const mid = [(root[0] + t[0]) / 2, (root[1] + t[1]) / 2];
     const sc = j => (j[0] - mid[0]) * pref[0] + (j[1] - mid[1]) * pref[1];
+    // near — ожидаемое направление сустава от корня (на переходе между позами): берём решение ближе к нему
+    if (near !== undefined) {
+      const off = j => Math.abs(((Math.atan2(j[1] - root[1], j[0] - root[0]) * 180 / Math.PI - near) % 360 + 540) % 360 - 180);
+      return { j: off(j1) <= off(j2) ? j1 : j2, e: t };
+    }
     return { j: sc(j1) >= sc(j2) ? j1 : j2, e: t };
   }
 
@@ -38,7 +43,9 @@ const ANIM = (() => {
       const s = spec || {};
       let j, e;
       const tgt = s.a || s.w || (s.r ? tf(s.r[0], s.r[1]) : null) || (s.rh ? hf(s.rh[0], s.rh[1]) : null);
-      if (tgt) { const r = ik(root, tgt, l1, l2, s.k || defPref); j = r.j; e = r.e; }
+      if (tgt) {
+                const r = ik(root, tgt, l1, l2, s.k || defPref, s.ka); j = r.j; e = r.e;
+      }
       else { const sc = s.s ?? 1; j = pt(root, s.u ?? 90, l1 * sc); e = pt(j, s.f ?? 90, l2 * (s.s2 ?? sc)); }
       const out = { root, j, e };
       if (isLeg) out.toe = front ? [e[0] + (i ? -3 : 3), e[1] + 3] : pt(e, s.ft ?? 0, L.ft);
@@ -61,6 +68,99 @@ const ANIM = (() => {
     return t < 0.5 ? a : b;
   }
   const ease = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  // Если конечность в одной позе задана углами, а в другой — точкой (или точками разного вида),
+  // переводим её в один вид: иначе при смешивании точка берётся сразу из конечной позы и рука «прыгает».
+  const TK = ['a', 'w', 'r', 'rh'], tkey = s => (s ? TK.find(k => s[k]) : null) || null;
+  const limbOf = (p, w, i) => (p[w] && (p[w][i] || p[w][0])) || null;
+  function asTarget(p, sk, w, i, key, other) {
+    const lb = (w === 'L' ? sk.legs : sk.arms)[i], e = lb.e, j = lb.j, s = limbOf(p, w, i) || {};
+    const dot = (d, v) => d[0] * v[0] + d[1] * v[1];
+    let v;
+    if (key === 'r') { const d = [e[0] - sk.sh[0], e[1] - sk.sh[1]]; v = [dot(d, sk.n), -dot(d, sk.u)]; }
+    else if (key === 'rh') { const d = [e[0] - sk.hip[0], e[1] - sk.hip[1]]; v = [dot(d, sk.n), dot(d, sk.u)]; }
+    else v = [e[0], e[1]];
+    const mid = [(lb.root[0] + e[0]) / 2, (lb.root[1] + e[1]) / 2], kv = [j[0] - mid[0], j[1] - mid[1]];
+    const o = { [key]: v };
+    if (Math.hypot(kv[0], kv[1]) > 0.5) o.k = kv; else if (other && other.k) o.k = other.k;
+    if (s.ft !== undefined) o.ft = s.ft;
+    return o;
+  }
+  // Приводим две позы к общему виду перед смешиванием: одинаковые массивы рук и ног, значения по умолчанию
+  // для отсутствующих полей, и подсказка ka — куда был направлен сустав (локоть, колено) в каждой позе.
+  // Тогда на переходе сустав не перескакивает на другую сторону, а рука или нога не дёргаются в начале или в конце.
+  const DEFK = (front, leg, i) => leg ? (front ? [i ? -1 : 1, -0.2] : [1, 0]) : (front ? [i ? -1 : 1, 0.4] : [-0.4, 1]);
+  // углы конечности по готовому скелету; ref — поза, к углам которой подгоняем (чтобы не крутить на 360°)
+  function toFK(l, leg, ref) {
+    const ang = (p, q) => Math.atan2(q[1] - p[1], q[0] - p[0]) * 180 / Math.PI, len = (p, q) => Math.hypot(q[0] - p[0], q[1] - p[1]);
+    const o = { u: ang(l.root, l.j), f: ang(l.j, l.e), s: len(l.root, l.j) / (leg ? L.th : L.ua), s2: len(l.j, l.e) / (leg ? L.sh : L.fa) };
+    if (ref) { if (ref.u !== undefined) o.u += Math.round((ref.u - o.u) / 360) * 360; if (ref.f !== undefined) o.f += Math.round((ref.f - o.f) / 360) * 360; }
+    return o;
+  }
+  function align(a, b) {
+    const front = a.v === 'f', A = { ...a }, B = { ...b };
+    for (const k of ['t', 'hd', 'tb', 'sl']) {
+      const d = k === 't' ? -90 : 0;
+      if (A[k] === undefined && B[k] !== undefined) A[k] = d;
+      if (B[k] === undefined && A[k] !== undefined) B[k] = d;
+    }
+    let ska = null, skb = null;
+    const skA = () => ska || (ska = solve(a)), skB = () => skb || (skb = solve(b));
+    for (const w of ['L', 'A']) {
+      if (!a[w] && !b[w]) continue;
+      const leg = w === 'L';
+      A[w] = [0, 1].map(i => ({ ...(limbOf(a, w, i) || { u: 90, f: 90 }) }));
+      B[w] = [0, 1].map(i => ({ ...(limbOf(b, w, i) || { u: 90, f: 90 }) }));
+      for (const i of [0, 1]) {
+        let sa = A[w][i], sb = B[w][i];
+        const ka = tkey(sa), kb = tkey(sb);
+        if (ka !== kb) {
+          const fkSide = ka ? sb : kb ? sa : null, short = fkSide && ((fkSide.s ?? 1) !== 1 || (fkSide.s2 ?? fkSide.s ?? 1) !== 1);
+          if (short) {
+            // конечность в одной позе укорочена (направлена на зрителя) — точкой её не задать, ведём обе позы по углам
+            const l = ka ? (leg ? skA().legs : skA().arms)[i] : (leg ? skB().legs : skB().arms)[i];
+            const f = toFK(l, leg, fkSide);
+            if (ka) A[w][i] = sa = Object.assign(f, leg ? { ft: sa.ft ?? 0 } : {}); else B[w][i] = sb = Object.assign(f, leg ? { ft: sb.ft ?? 0 } : {});
+          } else if (kb) A[w][i] = sa = asTarget(a, skA(), w, i, kb, sb);
+          else B[w][i] = sb = asTarget(b, skB(), w, i, ka, sa);
+        }
+        if (tkey(sa)) {
+          const la = (leg ? skA().legs : skA().arms)[i], lb = (leg ? skB().legs : skB().arms)[i];
+          const side = l => (l.j[0] - l.root[0]) * (l.e[1] - l.root[1]) - (l.j[1] - l.root[1]) * (l.e[0] - l.root[0]);
+          const ca = side(la), cb = side(lb);
+          if (Math.abs(ca) > 20 && Math.abs(cb) > 20 && Math.sign(ca) !== Math.sign(cb)) {
+            // в двух позах сустав согнут в разные стороны — точкой без скачка не провести, ведём по углам
+            const ang = (p, q) => Math.atan2(q[1] - p[1], q[0] - p[0]) * 180 / Math.PI;
+            const l1 = leg ? L.th : L.ua, l2 = leg ? L.sh : L.fa, len = (p, q) => Math.hypot(q[0] - p[0], q[1] - p[1]);
+            const fk = l => ({ u: ang(l.root, l.j), f: ang(l.j, l.e), s: len(l.root, l.j) / l1, s2: len(l.j, l.e) / l2 });
+            const fa = fk(la), fb = fk(lb);
+            fb.u += Math.round((fa.u - fb.u) / 360) * 360; fb.f += Math.round((fa.f - fb.f) / 360) * 360;
+            if (leg) { fa.ft = sa.ft ?? 0; fb.ft = sb.ft ?? 0; }
+            A[w][i] = fa; B[w][i] = fb;
+            continue;
+          }
+          const dk = DEFK(front, leg, i);
+          if (!sa.k) sa.k = dk;
+          if (!sb.k) sb.k = dk;
+          // направление сустава от корня конечности в каждой позе (в градусах), без перескока через ±180
+          const dir = lb => Math.atan2(lb.j[1] - lb.root[1], lb.j[0] - lb.root[0]) * 180 / Math.PI;
+          sa.ka = dir((leg ? skA().legs : skA().arms)[i]);
+          sb.ka = dir((leg ? skB().legs : skB().arms)[i]);
+          sb.ka += Math.round((sa.ka - sb.ka) / 360) * 360;
+          // поворот почти на пол-оборота (жим над головой) неоднозначен — там выбираем сторону по k, как раньше
+          if (Math.abs(sb.ka - sa.ka) > 150) { delete sa.ka; delete sb.ka; }
+        } else {
+          for (const x of [sa, sb]) {
+            if (x.u === undefined) x.u = 90;
+            if (x.f === undefined) x.f = 90;
+            if (x.s === undefined) x.s = 1;
+            if (x.s2 === undefined) x.s2 = x.s;
+          }
+        }
+        if (leg) for (const x of [sa, sb]) if (x.ft === undefined) x.ft = 0;
+      }
+    }
+    return [A, B];
+  }
   function poseAt(spec, time) {
     const K = spec.k; if (K.length === 1) return K[0];
     const d = spec.d || 0.9, hold = spec.hold ?? (spec.loop ? 0 : 0.28), seg = d + hold;
@@ -68,8 +168,8 @@ const ANIM = (() => {
     const n = order.length, cyc = seg * n, tt = time % cyc, i = Math.floor(tt / seg), f = tt - i * seg;
     const a = K[order[i]], b = K[order[(i + 1) % n]];
     if (f < hold) return a;
-    const x = (f - hold) / d;
-    return mix(a, b, spec.lin ? x : ease(x));
+    const x = (f - hold) / d, ab = align(a, b);
+    return mix(ab[0], ab[1], spec.lin ? x : ease(x));
   }
 
   // ---------- цвета ----------

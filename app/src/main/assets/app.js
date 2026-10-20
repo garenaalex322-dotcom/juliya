@@ -614,7 +614,7 @@ function matchQ(q, hay) {
   const h = normTxt(hay); return ws.every(w => h.includes(w.length > 4 ? w.slice(0, Math.max(4, w.length - 2)) : w));
 }
 const EQ_TYPES = [['', 'Любой инвентарь'], ['bw', 'Свой вес'], ['free', 'Гантели, штанга'], ['machine', 'Тренажёры и блоки'], ['band', 'Резинка']];
-const EQ_RX = { bw: /свой вес|перекладин|брусья|стена|скакалк|тумба|ролик|^скамья$|ступеньк|опора/i, free: /гантел|штанг|гир|гриф|блин/i, machine: /тренаж|блок|кроссовер|гравитрон|смит|дорожк|скотта/i, band: /резинк/i };
+const EQ_RX = { bw: /свой вес|перекладин|брусья|стена|скакалк|тумба|ролик|^скамья$|ступеньк|опора|коврик|фитбол|петли|trx|медбол|платформ|ремень|стул|канат|скамья для/i, free: /гантел|штанг|гир|гриф|блин/i, machine: /тренаж|блок|кроссовер|гравитрон|смит|дорожк|скотта|сани/i, band: /резинк/i };
 const EQ_WORDS = { bw: 'собственный вес без снаряжения дома', free: 'свободные веса', machine: 'тренажер тренажерный зал', band: 'эспандер лента' };
 const eqTypes = e => Object.keys(EQ_RX).filter(k => EQ_RX[k].test(e.eq || ''));
 function filterEx(list, q, g, t) { return list.filter(e => (!g || e.g === g) && (!t || eqTypes(e).includes(t)) && matchQ(q, [e.n, e.m || '', e.eq || '', GROUP[e.g] || ''].concat(eqTypes(e).map(k => EQ_WORDS[k])).join(' '))); }
