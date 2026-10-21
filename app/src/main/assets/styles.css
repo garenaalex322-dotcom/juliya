@@ -391,3 +391,43 @@ button.hd-date{border:0;background:none;color:var(--fg);cursor:pointer;padding:2
 .mode-sw svg{width:18px;height:18px;flex:none}
 .coachbar .icon-btn{flex:none}
 .next-day{border-color:var(--accent)}
+
+/* таймер подхода на время, вес в блоках */
+.set.set-t{grid-template-columns:24px minmax(0,1fr) auto auto 44px}
+.tm-btn{min-width:74px;height:38px;border-radius:10px;border:1.5px solid var(--line);background:var(--bg);color:var(--fg);font:600 14px var(--font-display);font-variant-numeric:tabular-nums;cursor:pointer;padding:0 8px;white-space:nowrap}
+.tm-btn.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.unit-sw{display:flex;flex:none;background:var(--sunken);border-radius:9px;padding:2px;gap:2px;align-self:center}
+.unit-sw button{border:0;background:none;border-radius:7px;padding:5px 8px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;min-height:30px}
+.unit-sw button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.sx-hd .ex-name{flex:1;min-width:0}
+
+/* круговая тренировка */
+.circ{border:1.5px solid var(--accent);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--surface)}
+.circ-hd{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.circ-hd b{display:inline-flex;align-items:center;gap:6px}
+.circ-hd svg,.circ-tag svg{width:16px;height:16px;vertical-align:-3px}
+.circ-prog{height:6px;border-radius:99px;background:var(--sunken);overflow:hidden}
+.circ-prog i{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .4s}
+.circ-ex{font:700 20px/1.2 var(--font-display);text-align:left}
+.circ-goal{margin:-4px 0 0;color:var(--muted);font-size:14px}
+.circ-num{margin:0;text-align:center;font:700 56px/1 var(--font-display);font-variant-numeric:tabular-nums;letter-spacing:.5px}
+.circ-lbl{margin:0;text-align:center;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:12px}
+.circ-rest .circ-num{color:var(--muted)}
+.circ-big{margin:4px 0 0;font:700 20px var(--font-display)}
+.circ-set{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:10px}
+.circ-set label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.circ-set .input{font-size:20px;text-align:center;height:48px}
+.circ-nav{justify-content:space-between}
+.circ-all summary{cursor:pointer;font-weight:600;padding:6px 0;color:var(--muted)}
+.circ-day{border-color:var(--accent)}
+.circ-tag{display:flex;gap:6px;align-items:flex-start;margin:0}
+
+/* общая тренировка нескольких подопечных */
+.grp-tabs{grid-auto-columns:minmax(0,1fr)}
+.grp-tabs button{display:flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:8px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp-tabs small{background:var(--accent);color:var(--accent-ink);border-radius:99px;font-size:11px;padding:1px 6px;font-weight:700}
+.hd ~ .card h2 svg{width:18px;height:18px;vertical-align:-3px}
+.btn svg{width:18px;height:18px;vertical-align:-4px}
+.grid3.cfg{align-items:end}
+.circ-hd b{flex:1;min-width:0}
+.circ-hd .btn-link{white-space:nowrap;flex:none}
