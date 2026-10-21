@@ -72,6 +72,9 @@ public class MainActivity extends Activity implements SensorEventListener {
     private static final int REQ_STEPS = 42;
     private static final int REQ_FILE = 43;
     private static final int REQ_NOTIF = 44;
+    private static final int REQ_SAVE = 45;
+    /** Файл, который ждёт, пока пользователь выберет, куда его сохранить. */
+    private byte[] pendingSave;
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
     private boolean fileMultiple;
@@ -215,6 +218,27 @@ public class MainActivity extends Activity implements SensorEventListener {
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_SAVE) {
+            final byte[] bytes = pendingSave;
+            pendingSave = null;
+            final Uri target = (resultCode == RESULT_OK && data != null) ? data.getData() : null;
+            if (bytes == null || target == null) {
+                js("window.__onFileSaved && window.__onFileSaved('cancel')");
+                return;
+            }
+            new Thread(() -> {
+                String res = "ok";
+                try (OutputStream os = getContentResolver().openOutputStream(target)) {
+                    if (os == null) throw new Exception("no stream");
+                    os.write(bytes);
+                } catch (Exception e) {
+                    res = "error";
+                }
+                final String r = res;
+                runOnUiThread(() -> js("window.__onFileSaved && window.__onFileSaved('" + r + "')"));
+            }).start();
+            return;
+        }
         if (requestCode != REQ_FILE || fileCallback == null) return;
         Uri[] result = null;
         if (resultCode == RESULT_OK) {
@@ -425,6 +449,11 @@ public class MainActivity extends Activity implements SensorEventListener {
         }).start();
     }
 
+    private static String safeFileName(String name) {
+        String n = name == null ? "" : name.replaceAll("[\\\\/:*?\"<>|]+", "_").trim();
+        return n.isEmpty() ? "export.xlsx" : n;
+    }
+
     private void js(String code) {
         if (web != null) web.evaluateJavascript(code, null);
     }
@@ -598,6 +627,61 @@ public class MainActivity extends Activity implements SensorEventListener {
                 return Reminders.set(getApplicationContext(), json);
             } catch (Exception e) {
                 return "error: " + e.getMessage();
+            }
+        }
+
+        /** Сохранить файл: система спрашивает, куда (по умолчанию «Загрузки»). Ответ — window.__onFileSaved('ok'|'cancel'|'error'). */
+        @JavascriptInterface
+        public void saveFile(final String name, final String mime, final String b64) {
+            final byte[] bytes;
+            try {
+                bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+            } catch (Exception e) {
+                runOnUiThread(() -> js("window.__onFileSaved && window.__onFileSaved('error')"));
+                return;
+            }
+            runOnUiThread(() -> {
+                pendingSave = bytes;
+                Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType(mime);
+                i.putExtra(Intent.EXTRA_TITLE, safeFileName(name));
+                try {
+                    startActivityForResult(i, REQ_SAVE);
+                } catch (Exception e) {
+                    pendingSave = null;
+                    js("window.__onFileSaved && window.__onFileSaved('error')");
+                }
+            });
+        }
+
+        /** Отправить файл через «Поделиться» (Telegram, почта, Диск, Excel…). */
+        @JavascriptInterface
+        public void shareFile(final String name, final String mime, final String b64) {
+            try {
+                byte[] bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+                File dir = new File(getCacheDir(), "exports");
+                if (!dir.exists() && !dir.mkdirs()) throw new Exception("no dir");
+                File[] old = dir.listFiles();
+                if (old != null) for (File f : old) //noinspection ResultOfMethodCallIgnored
+                    f.delete();
+                File out = new File(dir, safeFileName(name));
+                try (OutputStream os = new java.io.FileOutputStream(out)) {
+                    os.write(bytes);
+                }
+                final Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".files", out);
+                runOnUiThread(() -> {
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType(mime);
+                    send.putExtra(Intent.EXTRA_STREAM, uri);
+                    send.setClipData(ClipData.newRawUri(name, uri));
+                    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    Intent chooser = Intent.createChooser(send, "Отправить файл");
+                    chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivity(chooser);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> js("window.__onFileSaved && window.__onFileSaved('error')"));
             }
         }
 

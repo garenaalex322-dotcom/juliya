@@ -185,7 +185,7 @@ let S = migrate(loadState()) || demoState();
 customProvider = () => S.custom;
 
 const ui = { tab: 'today', date: todayKey(), sheet: null, meal: 'Обед', text: '', q: '', over: {}, hidden: new Set(), extra: [], manual: [], manualFor: null, pv: [], unk: [],
-  editId: null, editMeal: null, confirm: null, editProg: false, progCode: '', report: '', repDays: 7, repDetail: false, backup: '', undo: null,
+  editId: null, editMeal: null, confirm: null, editProg: false, progCode: '', report: '', repDays: 7, repDetail: false, expPer: 0, backup: '', undo: null,
   pendingImport: null, pendingRestore: null, per: 30, meas: 'waist', exSel: null, kbTab: 'ex', kbQ: '', kbG: '', kbE: '', exId: null, exFrom: null, artId: null,
   pickFor: null, pickQ: '', pickG: '', pickE: '', pickNew: false, woId: null, tplId: null, finishMin: '' };
 
@@ -996,6 +996,7 @@ function renderProfile() {
     <button class="btn btn-primary" data-a="makeReport">Сформировать отчёт</button>
     ${ui.report ? `<textarea id="reportTa" class="input" rows="10" readonly>${esc(ui.report)}</textarea><div class="row">${NB ? `<button class="btn btn-primary grow" data-a="shareReport">Отправить</button>` : ''}<button class="btn btn-ghost grow" data-a="copyReport">Скопировать</button></div>` : ''}
   </section>
+  ${expCard()}
   <section class="card"><div class="sec-head"><h2>Мои блюда</h2><button class="btn btn-ghost btn-sm" data-a="dishNew">${IC.plus} Создать</button></div>
     <p class="small muted">Домашнее блюдо собирается из продуктов один раз — потом его можно добавить одним касанием или вписать текстом, как обычный продукт.</p>
     ${dishList().length ? `<div>${dishList().map(c => `<div class="list-row"><span>${esc(c.name)}<br><span class="small muted num">${f0(c.kcal)} ккал на 100 г · порция ${f0(c.portion)} г · ${c.recipe.items.length} ${plural(c.recipe.items.length, 'продукт', 'продукта', 'продуктов')}</span></span><span class="row nowrap"><button class="x-btn" data-a="dishEdit" data-id="${esc(c.id)}" aria-label="Изменить блюдо">${IC.edit}</button><button class="x-btn" data-a="delCustom" data-id="${esc(c.id)}" aria-label="Удалить блюдо">${IC.x}</button></span></div>`).join('')}</div>` : ''}
@@ -2574,6 +2575,185 @@ if (!NB) {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { if (keepOn) webKeepOn(true); window.onAppResume(); } });
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => { }); });
 }
+
+/* ================= Выгрузка в Excel ================= */
+// Все записи дневника (своего или подопечной в режиме тренера) в таблицу .xlsx для анализа:
+// сводка, дни, недели, питание по продуктам, частые продукты, тренировки и подходы, вес и замеры.
+const EXP_PER = [[30, '30 дней'], [91, '3 месяца'], [365, 'Год'], [0, 'Всё время']];
+const numOr = v => { const n = toNum(v); return isFinite(n) ? n : (String(v ?? '').trim() || null); };
+function expOwner() {
+  if (MODE === 'coach' && CO.cur) { const c = CO.clients.find(x => x.id === CO.cur); return (c && c.name) || 'Подопечная'; }
+  return S.profile.name || 'Мой дневник';
+}
+function expRange(n) {
+  const t = todayKey();
+  if (n) return { from: addDays(t, -(n - 1)), to: t };
+  const ks = Object.keys(S.days).filter(k => { const d = S.days[k]; return d && ((d.items && d.items.length) || d.water || d.steps || d.ps); })
+    .concat(S.workouts.map(w => w.date), S.weights.map(w => w.date), S.measures.map(m => m.date)).filter(k => k && k <= t).sort();
+  return { from: ks[0] || t, to: t };
+}
+function expSheets(from, to) {
+  const tg = targets(), keys = [];
+  for (let k = from; k <= to; k = addDays(k, 1)) keys.push(k);
+  const inR = k => k >= from && k <= to;
+  const wos = S.workouts.filter(w => inR(w.date)).sort((a, b) => a.date.localeCompare(b.date) || (a.ts || 0) - (b.ts || 0));
+  const wts = S.weights.filter(w => inR(w.date)).sort((a, b) => a.date.localeCompare(b.date));
+  const mss = S.measures.filter(m => inR(m.date)).sort((a, b) => a.date.localeCompare(b.date));
+  const vol = e => kindOf(e.exId) === 'w' ? e.sets.filter(x => x.done !== false).reduce((s, x) => s + ((toNum(x.w) || 0) * (toNum(x.r) || 0)), 0) : 0;
+  const woVol = w => w.ex.reduce((s, e) => s + vol(e), 0);
+  const nt = key => { const n = noteOf(key); return n ? n.t : null; };
+
+  // по дням
+  const dayRows = [], perDay = {};
+  keys.forEach(k => {
+    const d = S.days[k], has = !!(d && d.items && d.items.length), tt = dayTotals(d), b = burnFor(k), st = stepsFor(k).n;
+    const dw = wos.filter(w => w.date === k), wt = S.weights.find(x => x.date === k);
+    perDay[k] = { has, tt, st, water: (d && d.water) || 0, wo: dw.length, vol: dw.reduce((s, w) => s + woVol(w), 0) };
+    dayRows.push([k, WDS[pk(k).getDay()], has ? tt.kcal : null, has ? tt.p : null, has ? tt.f : null, has ? tt.c : null,
+      tg ? tg.kcal : null, has && tg ? tt.kcal / tg.kcal : null, b ? b.total : null, has && b ? tt.kcal - b.total : null,
+      st || null, (d && d.water) || null, wt ? wt.kg : null, dw.length || null, dw.reduce((s, w) => s + (w.minutes || 0), 0) || null,
+      has ? d.items.length : null, nt(k)]);
+  });
+
+  // по неделям
+  const weekRows = [];
+  const wkeys = [...new Set(keys.map(weekStart))];
+  let prevW = null;
+  wkeys.forEach(ws => {
+    const ks = keys.filter(k => weekStart(k) === ws), fed = ks.filter(k => perDay[k].has), avg = f => fed.length ? fed.reduce((s, k) => s + perDay[k].tt[f], 0) / fed.length : null;
+    const stp = ks.filter(k => perDay[k].st > 0), wat = ks.filter(k => perDay[k].water > 0);
+    const wIn = wts.filter(w => weekStart(w.date) === ws), wEnd = wIn.length ? wIn[wIn.length - 1].kg : null;
+    weekRows.push([ws, fed.length, avg('kcal'), avg('p'), avg('f'), avg('c'), stp.length ? stp.reduce((s, k) => s + perDay[k].st, 0) / stp.length : null,
+      wat.length ? wat.reduce((s, k) => s + perDay[k].water, 0) / wat.length : null, ks.reduce((s, k) => s + perDay[k].wo, 0) || null,
+      ks.reduce((s, k) => s + perDay[k].vol, 0) || null, wEnd, wEnd != null && prevW != null ? r1(wEnd - prevW) : null]);
+    if (wEnd != null) prevW = wEnd;
+  });
+
+  // питание и частые продукты
+  const foodRows = [], freq = new Map();
+  let kcalAll = 0;
+  keys.forEach(k => {
+    const d = S.days[k]; if (!d || !d.items) return;
+    const order = it => { const i = MEALS.indexOf(it.meal); return i < 0 ? 9 : i; };
+    d.items.slice().sort((a, b) => order(a) - order(b)).forEach(it => {
+      const v = itemVals(it), g = it.manual ? null : (+it.grams || null);
+      foodRows.push([k, it.meal || '', it.name || '', g, v.kcal, v.p, v.f, v.c]);
+      const key = String(it.name || '').trim(); if (!key) return;
+      const f = freq.get(key) || { n: 0, g: 0, kcal: 0, p: 0 };
+      f.n++; f.g += g || 0; f.kcal += v.kcal; f.p += v.p; freq.set(key, f); kcalAll += v.kcal;
+    });
+  });
+  const prodRows = [...freq.entries()].sort((a, b) => b[1].kcal - a[1].kcal)
+    .map(([name, f]) => [name, f.n, f.g || null, f.kcal, kcalAll ? f.kcal / kcalAll : null, f.p, f.kcal / f.n]);
+
+  // тренировки и подходы
+  const woRows = [], setRows = [];
+  wos.forEach(w => {
+    const nSets = w.ex.reduce((s, e) => s + e.sets.filter(x => x.done !== false).length, 0), wk = weightOn(w.date);
+    woRows.push([w.date, w.dayName || 'Тренировка', w.minutes || null, w.ex.length, nSets, woVol(w) || null, wk ? woKcal(w, wk) : null,
+      w.author === 'coach' ? 'тренер' : 'сама', w.note || null, nt('w:' + w.id)]);
+    w.ex.forEach(e => {
+      const kind = kindOf(e.exId), info = exInfo(e.exId);
+      e.sets.filter(x => x.done !== false).forEach((x, i) => {
+        const wv = numOr(x.w), rv = numOr(x.r);
+        setRows.push([w.date, w.dayName || 'Тренировка', e.name, info ? (GROUP[info.g] || '') : '', i + 1,
+          kind === 'w' ? wv : null, kind === 'w' || kind === 'bw' ? rv : null, kind === 't' ? rv : null, kind === 'c' ? rv : null,
+          kind === 'w' && typeof wv === 'number' && typeof rv === 'number' ? wv * rv : null, e.target || null]);
+      });
+    });
+  });
+
+  // вес и замеры по датам
+  const bodyDates = [...new Set(wts.map(w => w.date).concat(mss.map(m => m.date)))].sort();
+  const bodyRows = bodyDates.map(k => {
+    const w = wts.filter(x => x.date === k).pop(), m = mss.filter(x => x.date === k).pop() || {};
+    return [k, w ? w.kg : null].concat(MEAS.map(([f]) => m[f] != null && m[f] !== '' ? +m[f] : null));
+  });
+
+  // сводка
+  const fed = keys.filter(k => perDay[k].has), avg = f => fed.length ? fed.reduce((s, k) => s + perDay[k].tt[f], 0) / fed.length : null;
+  const burns = fed.map(k => burnFor(k)).filter(Boolean), bal = burns.length ? fed.reduce((s, k) => { const b = burnFor(k); return b ? s + perDay[k].tt.kcal - b.total : s; }, 0) / burns.length : null;
+  const stp = keys.filter(k => perDay[k].st > 0), wat = keys.filter(k => perDay[k].water > 0);
+  const weeks = keys.length / 7, sum = [];
+  const add = (a, b, c) => sum.push([a, b ?? null, c || null]);
+  add('Дневник', expOwner());
+  add('Период', `${fmtDM(from)}.${from.slice(0, 4)} — ${fmtDM(to)}.${to.slice(0, 4)}`, `${keys.length} ${plural(keys.length, 'день', 'дня', 'дней')}`);
+  add('Выгружено', new Date().toLocaleString('ru-RU'));
+  if (tg) add('Норма в день (по текущему профилю)', Math.round(tg.kcal), `ккал · Б ${f0(tg.p)} · Ж ${f0(tg.f)} · У ${f0(tg.c)}`);
+  add('Дней с записями еды', fed.length, keys.length ? `${f0(fed.length / keys.length * 100)}% дней периода` : '');
+  add('Съедено в среднем, ккал', avg('kcal') != null ? Math.round(avg('kcal')) : null, tg && avg('kcal') != null ? `${f0(avg('kcal') / tg.kcal * 100)}% нормы` : '');
+  add('Белки в среднем, г', avg('p') != null ? r1(avg('p')) : null, tg ? `норма ${f0(tg.p)}` : '');
+  add('Жиры в среднем, г', avg('f') != null ? r1(avg('f')) : null, tg ? `норма ${f0(tg.f)}` : '');
+  add('Углеводы в среднем, г', avg('c') != null ? r1(avg('c')) : null, tg ? `норма ${f0(tg.c)}` : '');
+  if (bal != null) add('Баланс в среднем, ккал', Math.round(bal), bal < 0 ? 'дефицит' : 'профицит');
+  add('Шаги в среднем', stp.length ? Math.round(stp.reduce((s, k) => s + perDay[k].st, 0) / stp.length) : null, stp.length ? `по ${stp.length} ${plural(stp.length, 'дню', 'дням', 'дням')}` : '');
+  add('Вода в среднем, мл', wat.length ? Math.round(wat.reduce((s, k) => s + perDay[k].water, 0) / wat.length) : null);
+  add('Тренировок', wos.length, weeks >= 1 ? `${f1(wos.length / weeks)} в неделю` : '');
+  add('Общий тоннаж, кг', Math.round(wos.reduce((s, w) => s + woVol(w), 0)) || null, 'вес × повторы во всех подходах');
+  if (wts.length) add('Вес', wts[wts.length - 1].kg, wts.length > 1 ? `было ${f1(wts[0].kg)}, изменение ${sgn(wts[wts.length - 1].kg - wts[0].kg)} кг` : '');
+  MEAS.forEach(([f, l]) => {
+    const ms = mss.filter(m => m[f] != null && m[f] !== '');
+    if (ms.length) add(l + ', см', r1(+ms[ms.length - 1][f]), ms.length > 1 ? `было ${f1(ms[0][f])}, изменение ${sgn(ms[ms.length - 1][f] - ms[0][f])}` : '');
+  });
+  add('Примечание', 'Калорийность продуктов из базы и готовых блюд — средняя. Расход посчитан по формуле, это оценка.');
+
+  return [
+    { name: 'Сводка', filter: false, cols: [{ h: 'Показатель', w: 36 }, { h: 'Значение', w: 22, t: 'wrap' }, { h: 'Пояснение', w: 46, t: 'wrap' }], rows: sum },
+    { name: 'По дням', cols: [{ h: 'Дата', t: 'date', w: 11 }, { h: 'День', w: 6 }, { h: 'Съедено, ккал', t: 'int' }, { h: 'Белки, г', t: 'num1', w: 9 }, { h: 'Жиры, г', t: 'num1', w: 9 },
+      { h: 'Углеводы, г', t: 'num1', w: 10 }, { h: 'Норма, ккал', t: 'int', w: 10 }, { h: '% нормы', t: 'pct', w: 9 }, { h: 'Расход, ккал', t: 'int', w: 10 }, { h: 'Баланс, ккал', t: 'int', w: 10 },
+      { h: 'Шаги', t: 'int', w: 9 }, { h: 'Вода, мл', t: 'int', w: 9 }, { h: 'Вес, кг', t: 'num1', w: 8 }, { h: 'Тренировок', t: 'int', w: 10 }, { h: 'Минут тренировок', t: 'int', w: 10 },
+      { h: 'Записей еды', t: 'int', w: 9 }, { h: 'Комментарий тренера', t: 'wrap', w: 40 }], rows: dayRows },
+    { name: 'По неделям', cols: [{ h: 'Неделя с', t: 'date', w: 11 }, { h: 'Дней с записями еды', t: 'int', w: 11 }, { h: 'Ккал в среднем', t: 'int', w: 10 }, { h: 'Белки в среднем, г', t: 'num1', w: 10 },
+      { h: 'Жиры в среднем, г', t: 'num1', w: 10 }, { h: 'Углеводы в среднем, г', t: 'num1', w: 11 }, { h: 'Шаги в среднем', t: 'int', w: 10 }, { h: 'Вода в среднем, мл', t: 'int', w: 10 },
+      { h: 'Тренировок', t: 'int', w: 10 }, { h: 'Тоннаж, кг', t: 'int', w: 10 }, { h: 'Вес в конце недели', t: 'num1', w: 10 }, { h: 'Изменение веса, кг', t: 'num1', w: 10 }], rows: weekRows },
+    { name: 'Питание', cols: [{ h: 'Дата', t: 'date', w: 11 }, { h: 'Приём пищи', w: 11 }, { h: 'Продукт', w: 38 }, { h: 'Граммы', t: 'int', w: 8 }, { h: 'Ккал', t: 'int', w: 8 },
+      { h: 'Белки, г', t: 'num1', w: 9 }, { h: 'Жиры, г', t: 'num1', w: 9 }, { h: 'Углеводы, г', t: 'num1', w: 10 }], rows: foodRows },
+    { name: 'Частые продукты', cols: [{ h: 'Продукт', w: 38 }, { h: 'Сколько раз', t: 'int', w: 10 }, { h: 'Всего, г', t: 'int', w: 10 }, { h: 'Всего ккал', t: 'int', w: 10 },
+      { h: 'Доля калорий', t: 'pct', w: 10 }, { h: 'Белки всего, г', t: 'num1', w: 10 }, { h: 'Ккал за раз', t: 'int', w: 10 }], rows: prodRows },
+    { name: 'Тренировки', cols: [{ h: 'Дата', t: 'date', w: 11 }, { h: 'Тренировка', w: 28 }, { h: 'Минут', t: 'int', w: 7 }, { h: 'Упражнений', t: 'int', w: 10 }, { h: 'Подходов', t: 'int', w: 9 },
+      { h: 'Тоннаж, кг', t: 'int', w: 10 }, { h: 'Расход, ккал', t: 'int', w: 10 }, { h: 'Записал(а)', w: 10 }, { h: 'Заметка', t: 'wrap', w: 30 }, { h: 'Комментарий тренера', t: 'wrap', w: 36 }], rows: woRows },
+    { name: 'Подходы', cols: [{ h: 'Дата', t: 'date', w: 11 }, { h: 'Тренировка', w: 24 }, { h: 'Упражнение', w: 34 }, { h: 'Группа мышц', w: 12 }, { h: 'Подход', t: 'int', w: 7 },
+      { h: 'Вес, кг', t: 'num1', w: 8 }, { h: 'Повторы', w: 8 }, { h: 'Время, сек', w: 9 }, { h: 'Время, мин', w: 9 }, { h: 'Вес × повторы, кг', t: 'int', w: 10 }, { h: 'План', w: 14 }], rows: setRows },
+    { name: 'Вес и замеры', cols: [{ h: 'Дата', t: 'date', w: 11 }, { h: 'Вес, кг', t: 'num1', w: 9 }].concat(MEAS.map(([, l]) => ({ h: l + ', см', t: 'num1', w: 10 }))), rows: bodyRows }
+  ];
+}
+function expFileName(r) {
+  const who = expOwner().replace(/[\\/:*?"<>|]+/g, ' ').trim().replace(/\s+/g, '_') || 'дневник';
+  return `Тарелка_${who}_${r.from}_${r.to}.xlsx`;
+}
+function expBuild() {
+  const r = expRange(ui.expPer);
+  return { name: expFileName(r), bytes: XLSX_MINI.build(expSheets(r.from, r.to)) };
+}
+const bytesB64 = u8 => { let bin = ''; for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(bin); };
+const nbHas = f => !!(NB && typeof NB[f] === 'function');
+const webCanShareFiles = () => { try { return !NB && !!navigator.canShare && navigator.canShare({ files: [new File([''], 'a.xlsx', { type: XLSX_MINI.MIME })] }); } catch (e) { return false; } };
+function webDownload(f) {
+  const url = URL.createObjectURL(new Blob([f.bytes], { type: XLSX_MINI.MIME })), a = document.createElement('a');
+  a.href = url; a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000); toast('Файл скачан: ' + f.name);
+}
+window.__onFileSaved = st => toast(st === 'ok' ? 'Файл сохранён' : st === 'cancel' ? 'Сохранение отменено' : 'Не удалось сохранить файл');
+function expCard() {
+  const save = nbHas('saveFile') ? 'Сохранить файл' : 'Скачать файл', share = nbHas('shareFile') || webCanShareFiles();
+  return `<section class="card"><h2>Выгрузка в Excel</h2><p class="small muted">${MODE === 'coach' ? 'Весь дневник подопечной' : 'Все ваши записи'} одной таблицей для анализа: по дням и неделям, питание по продуктам, частые продукты, тренировки по подходам, вес и замеры. Открывается в Excel, Google Таблицах и «Числах».</p>
+    ${segm('expPer', ui.expPer, EXP_PER, 'Период выгрузки')}
+    <div class="row"><button class="btn btn-primary grow" data-a="expSave">${save}</button>${share ? `<button class="btn btn-ghost grow" data-a="expShare">Отправить</button>` : ''}</div></section>`;
+}
+Object.assign(A, {
+  expPer(b) { ui.expPer = +b.dataset.v; render(); },
+  expSave() {
+    let f; try { f = expBuild(); } catch (e) { toast('Не получилось собрать таблицу: ' + e.message); return; }
+    if (nbHas('saveFile')) NB.saveFile(f.name, XLSX_MINI.MIME, bytesB64(f.bytes)); else webDownload(f);
+  },
+  async expShare() {
+    let f; try { f = expBuild(); } catch (e) { toast('Не получилось собрать таблицу: ' + e.message); return; }
+    if (nbHas('shareFile')) { NB.shareFile(f.name, XLSX_MINI.MIME, bytesB64(f.bytes)); return; }
+    const file = new File([f.bytes], f.name, { type: XLSX_MINI.MIME });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: f.name }); } catch (e) { /* отменено */ } }
+    else webDownload(f);
+  }
+});
 
 const h0 = location.hash.replace('#', '');
 if (['today', 'train', 'progress', 'kb', 'profile'].includes(h0)) ui.tab = h0;
