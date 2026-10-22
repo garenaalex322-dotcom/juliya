@@ -1,0 +1,17 @@
+{
+  "name": "Тарелка и штанга",
+  "short_name": "Тарелка",
+  "description": "Дневник питания и тренировок с тренером",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F5F3F4",
+  "theme_color": "#A32F58",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
