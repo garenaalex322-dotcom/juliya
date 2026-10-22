@@ -181,7 +181,7 @@ function demoState() {
   return s;
 }
 
-let S = migrate(loadState()) || demoState();
+let S = migrate(loadState()) || blankState();   // первый запуск — пустой дневник; пример — только по кнопке
 customProvider = () => S.custom;
 
 const ui = { tab: 'today', date: todayKey(), sheet: null, meal: 'Обед', text: '', q: '', over: {}, hidden: new Set(), extra: [], manual: [], manualFor: null, pv: [], unk: [],
@@ -271,9 +271,13 @@ async function copyText(text, ta) {
 }
 
 /* ================= Общие элементы ================= */
+const WELCOME = 'tarelka-welcome-done';
+// новый пользователь: ничего не записано и подсказку ещё не скрывали
+const isNewUser = () => MODE !== 'coach' && !S.demo && !S.link && !lsGet(WELCOME) && !(toNum(S.profile.weight) > 0) && !S.workouts.length && !Object.keys(S.days).some(k => (S.days[k].items || []).length);
 function demoBanner() {
   if (MODE === 'coach') return coachBar();
-  if (S.demo) return `<div class="banner"><p>Это пример заполненного дневника, чтобы было видно, как всё работает. Ваши записи начнутся с чистого листа.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="startFresh">Начать свой дневник</button><button class="btn btn-ghost btn-sm" data-a="tab" data-tab="profile">У меня есть код тренера</button></div></div>`;
+  if (S.demo) return `<div class="banner"><p><b>Это пример, а не ваши данные.</b> Выдуманный дневник за 4 недели, чтобы было видно, как всё выглядит. Ваш дневник начнётся с чистого листа.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="startFresh">Начать свой дневник</button><button class="btn btn-ghost btn-sm" data-a="tab" data-tab="profile">У меня есть код тренера</button></div></div>`;
+  if (isNewUser() && ui.tab === 'today') return `<div class="banner"><p><b>Дневник пока пустой — здесь будут только ваши записи.</b> Еду записывайте текстом, как в сообщении: «гречка 150 г, 2 яйца». Код от тренера вводится в «Профиле».</p><div class="row"><button class="btn btn-ghost btn-sm" data-a="showDemo">Посмотреть пример</button><button class="btn-link" data-a="startFresh">Скрыть</button></div></div>`;
   if (!S.link && window.firebase && ui.tab === 'today' && !lsGet('tarelka-hide-link') && !coachKnown()) return `<div class="banner"><p>Есть код от тренера? Подключитесь, и тренер будет видеть ваш дневник.</p><div class="row"><button class="btn btn-primary btn-sm" data-a="tab" data-tab="profile">Ввести код</button><button class="btn-link" data-a="hideLink">Позже</button></div></div>`;
   if (S.link && Sync.status === 'lost' && ui.tab === 'today') return `<div class="banner plain"><p>${esc(syncText())}</p><button class="btn btn-ghost btn-sm" data-a="tab" data-tab="profile">Открыть «Профиль»</button></div>`;
   if (!storageOk) return `<div class="banner plain"><p>Записи сейчас не сохраняются: память приложения недоступна. Сделайте резервную копию в «Профиле».</p></div>`;
@@ -1617,7 +1621,8 @@ function closeSheet() { const was = ui.sheet; ui.sheet = null; ui.confirm = ui.c
 /* ================= Действия ================= */
 const A = {
   tab(b) { ui.tab = b.dataset.tab; ui.confirm = null; render(); window.scrollTo(0, 0); },
-  startFresh() { mutate(() => { }); render(); },
+  startFresh() { lsSet(WELCOME, '1'); if (S.demo) mutate(() => { }); render(); },
+  showDemo() { S = demoState(); ui.date = todayKey(); render(); window.scrollTo(0, 0); },
   dayPrev() { ui.date = addDays(ui.date, -1); render(); },
   dayNext() { if (ui.date < todayKey()) { ui.date = addDays(ui.date, 1); render(); } },
   gotoDay(b) { ui.date = b.dataset.k; ui.tab = 'today'; render(); window.scrollTo(0, 0); },
@@ -1949,7 +1954,7 @@ const A = {
     if (FB.init()) { const u = FB.auth.currentUser; if (u && u.isAnonymous) FB.auth.signOut().catch(() => { }); else if (u && !CO.user) { CO.user = u; Coach.load(); } }
     render(); window.scrollTo(0, 0);
   },
-  toClient() { if (MODE !== 'coach') return; Sync.stop(); stopRest(); if (CO.unsub) { CO.unsub(); CO.unsub = null; } CO.cur = null; CO.user = null; CO.ready = false; MODE = 'client'; lsSet('tarelka-mode', 'client'); S = migrate(loadState()) || demoState(); Object.assign(ui, { tab: 'today', date: todayKey(), confirm: null, sheet: null }); renderSheet();
+  toClient() { if (MODE !== 'coach') return; Sync.stop(); stopRest(); if (CO.unsub) { CO.unsub(); CO.unsub = null; } CO.cur = null; CO.user = null; CO.ready = false; MODE = 'client'; lsSet('tarelka-mode', 'client'); S = migrate(loadState()) || blankState(); Object.assign(ui, { tab: 'today', date: todayKey(), confirm: null, sheet: null }); renderSheet();
     // вход тренера сохраняем: свой дневник работает без него. Выходим, только если свой дневник сам подключён к тренеру
     const u = FB.ok && FB.auth.currentUser;
     if (u && !u.isAnonymous) { if (S.link) FB.auth.signOut().catch(() => { }); else lsSet('tarelka-coach-used', '1'); }

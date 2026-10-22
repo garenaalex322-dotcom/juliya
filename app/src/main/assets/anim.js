@@ -165,7 +165,7 @@ const ANIM = (() => {
     const K = spec.k; if (K.length === 1) return K[0];
     const d = spec.d || 0.9, hold = spec.hold ?? (spec.loop ? 0 : 0.28), seg = d + hold;
     const order = spec.loop ? K.map((_, i) => i) : K.map((_, i) => i).concat(K.slice(1, -1).map((_, i) => K.length - 2 - i));
-    const n = order.length, cyc = seg * n, tt = time % cyc, i = Math.floor(tt / seg), f = tt - i * seg;
+    const n = order.length, cyc = seg * n, tt = time % cyc, i = Math.min(n - 1, Math.floor(tt / seg)), f = tt - i * seg;   // min: из-за округления i мог стать равным n
     const a = K[order[i]], b = K[order[(i + 1) % n]];
     if (f < hold) return a;
     const x = (f - hold) / d, ab = align(a, b);
